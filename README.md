@@ -31,12 +31,37 @@ Os dados ficam na rede local: o servidor roda numa máquina Ubuntu de gestão, s
 
 ## Instalação (Ubuntu de gestão)
 
+O repositório é privado. O GitHub não aceita a senha da conta no `git clone`: autentique antes com `gh auth login` ou use um token de acesso (de preferência com permissão só de leitura neste repositório) no lugar da senha.
+
 ```bash
-git clone <este-repo> corp-dfir && cd corp-dfir
-sudo ./install.sh 192.168.0.50     # IP da máquina na rede local
+git clone https://github.com/BrusCode/corp-dfir.git corp-dfir && cd corp-dfir
+sudo ./install.sh 192.168.10.56     # IP da máquina na rede local
 ```
 
-O instalador imprime a URL do painel, a senha, o token e o thumbprint, junto com a linha de argumentos pronta para o Tactical.
+O instalador imprime a URL do painel (com a porta), a senha, o token e o thumbprint, junto com a linha de argumentos pronta para o Tactical. A senha do painel aparece **uma única vez**: guarde no cofre.
+
+### Atualizar
+
+```bash
+cd ~/corp-dfir
+git pull
+sudo ./install.sh 192.168.10.56
+```
+
+Pode rodar de novo quantas vezes precisar. O instalador preserva o token, o certificado, a senha e a porta já configurados, e reconstrói os serviços com o código novo.
+
+### Porta
+
+- Padrão: `8443`. Se estiver ocupada por outro serviço, o instalador usa a próxima livre (até `8543`), avisa e grava em `deploy/.env` (`DFIR_PORT`). As execuções seguintes mantêm essa porta.
+- Use sempre a porta impressa pelo instalador no painel e no argumento `-Port` do Tactical.
+
+### Senha do painel
+
+```bash
+sudo ./install.sh 192.168.10.56 --reset-password
+```
+
+Gera e mostra uma senha nova. O instalador também regenera a senha sozinho se encontrar um hash gravado por versões antigas, em que o Docker Compose corrompia o `$` do hash.
 
 Depois, abra o painel em `https://<IP>:8443` (usuário `dfir`) e acesse **Configurações**:
 

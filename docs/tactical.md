@@ -9,10 +9,10 @@ Settings → Script Manager → New Script
 - **Run as user:** desmarcado (precisa rodar como **SYSTEM** para ler todos os perfis e os logs de serviço)
 - **Timeout:** 3600 segundos (a coleta é lenta de propósito, para não pesar)
 - **Script:** conteúdo de `collector/Invoke-DfirCollect.ps1`
-- **Script Arguments (padrão):** os parâmetros impressos pelo `install.sh`, por exemplo:
+- **Script Arguments (padrão):** os parâmetros impressos pelo `install.sh`, com a porta que ele escolheu (não necessariamente 8443). Por exemplo:
 
 ```
--Server 192.168.0.50 -Port 8443 -Token <TOKEN> -CertThumbprint <THUMBPRINT>
+-Server 192.168.10.56 -Port <PORTA> -Token <TOKEN> -CertThumbprint <THUMBPRINT>
 ```
 
 Para não deixar o token salvo no script, você pode cadastrá-lo como **Global Key Store** (Settings → Global Settings → Key Store) e usar `{{global.dfir_token}}` nos argumentos.
