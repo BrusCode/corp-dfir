@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Coletas recebidas</h2>
+<table>
+  <tr><th>#</th><th>Host</th><th>Recebido</th><th>Status</th><th>Eventos</th><th>Achados</th><th>SHA-256 do pacote</th></tr>
+  {% for c in collections %}
+  <tr>
+    <td>{{ c.id }}</td>
+    <td><a href="/findings?host={{ c.host }}">{{ c.host }}</a></td>
+    <td>{{ c.received_at[:19] }}</td>
+    <td>{{ c.status }}{% if c.error %}<div class="muted">{{ c.error }}</div>{% endif %}</td>
+    <td>{{ c.events }}</td>
+    <td>{{ c.findings }}</td>
+    <td class="snip">{{ c.sha256 }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">Nenhuma coleta ainda.</td></tr>
+  {% endfor %}
+</table>
+<h2>Segredos que aparecem em mais lugares</h2>
+<table>
+  <tr><th>Regra</th><th>Valor mascarado</th><th>Hosts</th><th>Ocorrências</th><th>Onde</th></tr>
+  {% for s in secrets %}
+  <tr><td>{{ s.rule_id }}</td><td class="snip">{{ s.masked }}</td><td>{{ s.hosts }}</td><td>{{ s.occurrences }}</td><td>{{ s.host_list }}</td></tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">Nenhum segredo encontrado.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

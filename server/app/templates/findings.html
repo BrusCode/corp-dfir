@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Achados</h2>
+<form class="filters" method="get">
+  <input name="host" placeholder="host" value="{{ host }}">
+  <select name="severity">
+    <option value="">severidade</option>
+    {% for s in ["alta", "media", "baixa"] %}<option {% if s == severity %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <select name="category">
+    <option value="">categoria</option>
+    {% for c in ["segredo", "fraude", "acesso_remoto"] %}<option {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select>
+  <button>Filtrar</button>
+</form>
+<table>
+  <tr><th>Sev.</th><th>Regra</th><th>Host / perfil</th><th>Fonte</th><th>Quando</th><th>Trecho</th><th>Triagem IA</th><th>Arquivo</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td class="sev-{{ r.severity }}">{{ r.severity }}</td>
+    <td>{{ r.rule_id }}{% if r.fingerprint %}<div class="muted">fp {{ r.fingerprint }}</div>{% endif %}</td>
+    <td>{{ r.host }}<div class="muted">{{ r.profile }}</div></td>
+    <td>{{ r.source }}</td>
+    <td>{{ (r.ts or "")[:19] }}</td>
+    <td class="snip">{{ r.snippet }}</td>
+    <td>{{ r.triage_label or "" }}<div class="muted">{{ r.triage_reason or "" }}</div></td>
+    <td class="snip muted">{{ r.original_path }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="muted">Nenhum achado com esses filtros.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
