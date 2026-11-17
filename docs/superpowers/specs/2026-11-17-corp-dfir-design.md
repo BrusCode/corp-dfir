@@ -134,3 +134,20 @@ Documentar em `docs/bitdefender.md`.
 - **Coletor:** modo `-DryRun`, que lista o que coletaria sem copiar, e teste numa VM.
 - **Servidor:** pytest para parsers (fixtures de cada formato), regras de detecção (positivos e negativos), validação de hash/token no upload e mascaramento.
 - **Ponta a ponta:** script de smoke que monta um zip fake, envia e confere os achados no painel.
+
+## Adendo (17/11): análise de certificados
+
+Pedido durante a implementação: verificar se as máquinas têm certificados de clientes, possivelmente baixados em sessões de suporte remoto.
+
+- **Coletor (`certs.json`):** só metadados, nunca a chave privada.
+  - Repositórios `LocalMachine\My`, `Root` e `CA`, e `CurrentUser\My` de cada perfil, lido dos blobs em `AppData\Roaming\Microsoft\SystemCertificates`. A propriedade 0x02 do blob indica se há chave privada associada.
+  - Arquivos `.pfx/.p12` (tentativa de leitura sem senha; se falhar, `readable=false` + hash) e `.cer/.crt/.pem`.
+  - Origem do download pelo `Zone.Identifier` (`HostUrl`, `ReferrerUrl`, `ZoneId`).
+- **Servidor (`app/certs.py`):**
+  - `cert_terceiro` (alta com chave privada, média sem) quando o CNPJ não está em `DFIR_OWN_CNPJS`;
+  - `cert_baixado` (alta) quando há origem de download;
+  - `cert_pfx_protegido` (alta) para PFX ilegível;
+  - `cert_icp_sem_cnpj` (média);
+  - `cert_raiz_suspeita` (alta) para raiz autoassinada imitando ICP-Brasil ou banco;
+  - correlação entre máquinas pelo thumbprint (ou pelo SHA-256 do arquivo, quando ilegível).
+- **Painel:** página `/certs`.
