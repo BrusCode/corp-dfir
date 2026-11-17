@@ -1,0 +1,29 @@
+{
+	auto_https off
+	admin off
+}
+
+:8443 {
+	tls /certs/server.crt /certs/server.key
+
+	# Coletor: autenticado por X-DFIR-Token na API. Sem limite de corpo (pacotes até 2 GB).
+	handle /api/v1/upload {
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 1h
+				write_timeout 1h
+			}
+		}
+	}
+	handle /healthz {
+		reverse_proxy api:8000
+	}
+
+	# Painel: senha.
+	handle {
+		basic_auth {
+			{$DFIR_PANEL_USER} {$DFIR_PANEL_HASH}
+		}
+		reverse_proxy api:8000
+	}
+}

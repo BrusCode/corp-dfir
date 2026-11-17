@@ -62,3 +62,16 @@ def test_finding_carries_masked_value_and_fingerprint():
     assert f.masked == mask(key)
     assert f.fingerprint == fingerprint(key)
     assert key not in f.snippet
+
+
+def test_neighbor_snippets_never_leak_secrets():
+    key = "sk-or-v1-" + "e5" * 32
+    text = f"chave {key}, manda pra conta laranja"
+    for f in scan_text(text, RULES):
+        assert key not in f.snippet, f.rule_id
+        assert "e5e5e5e5" not in f.snippet, f.rule_id
+
+
+def test_openrouter_key_not_double_counted_as_openai():
+    key = "sk-or-v1-" + "e5" * 32
+    assert kinds(key) == {"openrouter_key"}

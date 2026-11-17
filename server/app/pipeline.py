@@ -9,7 +9,7 @@ from app import db, llm
 from app.certs import analyze_cert, describe
 from app.config import Settings
 from app.parsers import parse_file
-from app.rules import load_rules, scan_text
+from app.rules import load_rules, mask_secrets, scan_text
 
 
 def _safe_extract(zpath: Path, dest: Path) -> None:
@@ -48,11 +48,7 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                            "original_path": entry.get("original_path")}
                     findings = scan_text(event.text, rules)
                     # Events are stored with secrets masked; the raw value stays in the evidence.
-                    stored_text = event.text
-                    for f in findings:
-                        if f.masked:
-                            stored_text = stored_text.replace(
-                                _raw_value(event.text, f), f.masked)
+                    stored_text = mask_secrets(event.text, rules)
                     event_id = db.insert_event(
                         con, collection_id, category=entry.get("category"), role=event.role,
                         location=event.location, text=stored_text[:100_000], **ctx)
@@ -96,14 +92,3 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-
-def _raw_value(text: str, finding) -> str:
-    """Find the raw secret behind a masked finding so it can be replaced in stored text."""
-    from app.masking import fingerprint
-    for rule in load_rules():
-        if rule.id != finding.rule_id:
-            continue
-        for match in rule.pattern.finditer(text):
-            if fingerprint(match.group(0)) == finding.fingerprint:
-                return match.group(0)
-    return "\0"

@@ -52,42 +52,44 @@ def load_rules(rules_dir: Path = RULES_DIR) -> list[Rule]:
     return rules
 
 
-def _snippet(text: str, start: int, end: int, replacement: str | None) -> str:
-    before = text[max(0, start - SNIPPET_RADIUS) : start]
-    after = text[end : end + SNIPPET_RADIUS]
-    middle = replacement if replacement is not None else text[start:end]
-    return f"{before}{middle}{after}".replace("\n", " ").strip()
+def _window(text: str, start: int, end: int) -> str:
+    return text[max(0, start - SNIPPET_RADIUS) : end + SNIPPET_RADIUS].replace("\n", " ").strip()
 
 
 def scan_text(text: str, rules: list[Rule]) -> list[Finding]:
+    """Detect on the raw text, but always cut snippets from the masked text.
+
+    A snippet of any finding (secret or keyword) may contain a neighbor secret, so
+    snippets never come from the raw text.
+    """
     if not text:
         return []
+    masked_text = mask_secrets(text, rules)
     findings: list[Finding] = []
     seen: set[tuple[str, int]] = set()
     for rule in rules:
-        for match in rule.pattern.finditer(text):
+        source = text if rule.secret else masked_text
+        for match in rule.pattern.finditer(source):
             start, end = match.span()
             if rule.context:
-                window = text[max(0, start - CONTEXT_WINDOW) : start]
+                window = source[max(0, start - CONTEXT_WINDOW) : start]
                 if not rule.context.search(window):
                     continue
-            key = (rule.id, start)
-            if key in seen:
+            if (rule.id, start) in seen:
                 continue
-            seen.add(key)
-            value = match.group(0)
-            masked = mask(value) if rule.secret else None
-            findings.append(
-                Finding(
-                    rule_id=rule.id,
-                    category=rule.category,
-                    severity=rule.severity,
-                    score=SEVERITY_SCORE[rule.severity],
-                    snippet=_snippet(text, start, end, masked),
-                    masked=masked,
-                    fingerprint=fingerprint(value) if rule.secret else None,
-                )
-            )
+            seen.add((rule.id, start))
+            if rule.secret:
+                value = match.group(0)
+                masked = mask(value)
+                pos = masked_text.find(masked)
+                snippet = _window(masked_text, max(pos, 0), max(pos, 0) + len(masked))
+                findings.append(Finding(rule.id, rule.category, rule.severity,
+                                        SEVERITY_SCORE[rule.severity], snippet,
+                                        masked, fingerprint(value)))
+            else:
+                findings.append(Finding(rule.id, rule.category, rule.severity,
+                                        SEVERITY_SCORE[rule.severity],
+                                        _window(masked_text, start, end)))
     return findings
 
 

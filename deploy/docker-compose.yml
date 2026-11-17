@@ -1,0 +1,35 @@
+name: corp-dfir
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis:/data]
+    restart: unless-stopped
+
+  api:
+    build: ../server
+    env_file: .env
+    volumes: [./data:/data]
+    depends_on: [redis]
+    restart: unless-stopped
+
+  worker:
+    build: ../server
+    env_file: .env
+    command: ["taskiq", "worker", "app.tasks:broker", "--workers", "1", "--max-async-tasks", "1"]
+    volumes: [./data:/data]
+    depends_on: [redis]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["${DFIR_PORT:-8443}:8443"]
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  redis:
