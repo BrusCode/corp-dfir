@@ -2,7 +2,7 @@
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -44,7 +44,25 @@ def get_settings() -> Settings:
         llm_model=os.environ.get("LLM_MODEL", ""),
         llm_min_score=int(os.environ.get("LLM_MIN_SCORE", "5")),
         max_upload_bytes=int(os.environ.get("DFIR_MAX_UPLOAD_BYTES", str(2_200 * 1024 * 1024))),
-        own_cnpjs=frozenset(
-            re.sub(r"\D", "", c) for c in os.environ.get("DFIR_OWN_CNPJS", "").split(",") if c.strip()
-        ),
+        own_cnpjs=parse_cnpjs(os.environ.get("DFIR_OWN_CNPJS", "")),
     )
+
+
+def parse_cnpjs(raw: str) -> frozenset:
+    return frozenset(d for d in (re.sub(r"\D", "", c) for c in raw.split(",")) if d)
+
+
+def effective(settings: Settings) -> Settings:
+    """Environment settings overridden by what was saved in the admin page."""
+    from app import db
+
+    o = db.get_settings_overrides(settings)
+    changes = {}
+    if "own_cnpjs" in o:
+        changes["own_cnpjs"] = parse_cnpjs(o["own_cnpjs"])
+    for key in ("llm_base_url", "llm_api_key", "llm_model"):
+        if key in o:
+            changes[key] = o[key].rstrip("/") if key == "llm_base_url" else o[key]
+    if o.get("llm_min_score", "").isdigit():
+        changes["llm_min_score"] = int(o["llm_min_score"])
+    return replace(settings, **changes)

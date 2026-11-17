@@ -4,7 +4,7 @@ from taskiq_redis import ListQueueBroker
 
 from app import db
 from app.config import get_settings
-from app.pipeline import process_bundle
+from app.pipeline import process_bundle, retriage_pending
 
 broker = ListQueueBroker(url=get_settings().redis_url)
 
@@ -14,3 +14,10 @@ def process_upload(collection_id: int) -> dict:
     settings = get_settings()
     db.init_db(settings)
     return process_bundle(settings, collection_id)
+
+
+@broker.task(task_name="retriage", retry_on_error=False)
+def retriage() -> int:
+    settings = get_settings()
+    db.init_db(settings)
+    return retriage_pending(settings)

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS certificates (
   file_sha256 TEXT, file_created TEXT, zone_id INTEGER, host_url TEXT, referrer_url TEXT,
   verdict TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_coll ON events(collection_id);
 """
@@ -208,3 +209,29 @@ def list_certificates(settings, host=None, only_flagged=True) -> list[dict]:
         params.append(host)
     with connect(settings) as con:
         return [dict(r) for r in con.execute(query + " ORDER BY host, cnpj", params)]
+
+
+def get_settings_overrides(settings) -> dict[str, str]:
+    if not settings.db_path.exists():
+        return {}
+    with connect(settings) as con:
+        try:
+            return {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM settings")}
+        except sqlite3.OperationalError:
+            return {}
+
+
+def set_setting(settings, key: str, value: str | None) -> None:
+    with connect(settings) as con:
+        if value is None:
+            con.execute("DELETE FROM settings WHERE key=?", (key,))
+        else:
+            con.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                        " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+
+def findings_for_triage(settings, min_score: int) -> list[dict]:
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM findings WHERE score >= ? AND (triage_label IS NULL OR triage_label='erro')"
+            " ORDER BY id", (min_score,))]

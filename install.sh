@@ -85,7 +85,7 @@ Thumbprint:    $THUMB
 Tactical RMM > Script Arguments do Invoke-DfirCollect.ps1:
   -Server $IP -Port $PORT -Token $TOKEN_NOW -CertThumbprint $THUMB
 
-Configure os CNPJs da empresa em $ENV_FILE (DFIR_OWN_CNPJS) e rode:
-  cd $DEPLOY && docker compose up -d
+Próximo passo: abra o painel > Configurações e informe os CNPJs da empresa
+e, se quiser, a triagem por IA (ex.: OpenRouter https://openrouter.ai/api/v1).
 =====================================================
 EOF

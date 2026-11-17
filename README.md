@@ -36,12 +36,19 @@ git clone <este-repo> corp-dfir && cd corp-dfir
 sudo ./install.sh 192.168.0.50     # IP da máquina na rede local
 ```
 
-O instalador imprime a URL do painel, a senha, o token e o thumbprint, junto com a linha de argumentos pronta para o Tactical. Depois, edite `deploy/.env`:
+O instalador imprime a URL do painel, a senha, o token e o thumbprint, junto com a linha de argumentos pronta para o Tactical.
 
-- `DFIR_OWN_CNPJS=` — CNPJs da própria empresa, separados por vírgula, para não marcá-los como terceiros.
-- `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` — triagem opcional por IA (endpoint compatível com OpenAI, de preferência local).
+Depois, abra o painel em `https://<IP>:8443` (usuário `dfir`) e acesse **Configurações**:
 
-Aplique com `cd deploy && docker compose up -d`.
+- **CNPJs da empresa**, para que os certificados próprios não sejam marcados como de terceiros.
+- **Triagem por IA (opcional).** Para a OpenRouter, use:
+  - URL: `https://openrouter.ai/api/v1`;
+  - modelo, por exemplo `deepseek/deepseek-chat`;
+  - sua chave `sk-or-...`.
+
+  Use **Testar conexão** para validar e **Rodar triagem nos achados pendentes** para classificar o que já foi coletado. A chave fica salva no servidor e nunca é exibida de volta. As requisições à OpenRouter exigem provedores sem retenção nem treino (`data_collection: deny`).
+
+O que é salvo no painel sobrepõe o `deploy/.env`, que continua valendo como padrão, e não precisa de reinício.
 
 ## Documentação
 

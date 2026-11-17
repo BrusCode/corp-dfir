@@ -11,12 +11,13 @@ import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from app import db
+from app import config, db, llm
 from app.config import get_settings
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -30,20 +31,36 @@ SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 CHUNK = 1024 * 1024
 
 
-def enqueue(collection_id: int) -> None:
-    """Hand the collection to the worker (replaced in tests)."""
+def _kick(task_name: str, *args) -> None:
     import asyncio
 
-    from app.tasks import broker, process_upload
+    from app import tasks
 
-    async def _kick():
-        await broker.startup()
+    async def _run():
+        await tasks.broker.startup()
         try:
-            await process_upload.kiq(collection_id)
+            await getattr(tasks, task_name).kiq(*args)
         finally:
-            await broker.shutdown()
+            await tasks.broker.shutdown()
 
-    asyncio.run(_kick())
+    asyncio.run(_run())
+
+
+def enqueue(collection_id: int) -> None:
+    """Hand the collection to the worker (replaced in tests)."""
+    _kick("process_upload", collection_id)
+
+
+def enqueue_retriage() -> None:
+    _kick("retriage")
+
+
+def _require_same_origin(request: Request) -> None:
+    """Block cross-site form posts against the Basic-Auth panel."""
+    origin = request.headers.get("origin") or request.headers.get("referer") or ""
+    host = request.headers.get("host", "")
+    if not origin or origin.split("://", 1)[-1].split("/", 1)[0] != host:
+        raise HTTPException(403, "origem não permitida")
 
 
 def _read_custody(path: Path) -> dict:
@@ -175,3 +192,55 @@ def export_csv(host: str = "", severity: str = "", category: str = ""):
 def export_json(host: str = "", severity: str = "", category: str = ""):
     return db.list_findings(get_settings(), host=host, severity=severity, category=category,
                             limit=100_000)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin(request: Request, msg: str = "", ok: int = 1):
+    eff = config.effective(get_settings())
+    return templates.TemplateResponse(request, "admin.html", {
+        "own_cnpjs": ", ".join(sorted(eff.own_cnpjs)),
+        "llm_base_url": eff.llm_base_url,
+        "llm_model": eff.llm_model,
+        "llm_min_score": eff.llm_min_score,
+        "key_set": bool(eff.llm_api_key),
+        "key_hint": (eff.llm_api_key[:9] + "…" + eff.llm_api_key[-4:]) if len(eff.llm_api_key) > 16 else "",
+        "llm_on": llm.enabled(eff),
+        "msg": msg, "ok": ok,
+    })
+
+
+@app.post("/admin")
+def admin_save(
+    request: Request,
+    own_cnpjs: str = Form(""),
+    llm_base_url: str = Form(""),
+    llm_model: str = Form(""),
+    llm_api_key: str = Form(""),
+    llm_min_score: str = Form("5"),
+    clear_key: str = Form(""),
+):
+    _require_same_origin(request)
+    settings = get_settings()
+    db.set_setting(settings, "own_cnpjs", ",".join(sorted(config.parse_cnpjs(own_cnpjs))))
+    db.set_setting(settings, "llm_base_url", llm_base_url.strip())
+    db.set_setting(settings, "llm_model", llm_model.strip())
+    db.set_setting(settings, "llm_min_score", llm_min_score.strip() if llm_min_score.strip().isdigit() else "5")
+    if clear_key:
+        db.set_setting(settings, "llm_api_key", "")
+    elif llm_api_key.strip():
+        db.set_setting(settings, "llm_api_key", llm_api_key.strip())
+    return RedirectResponse("/admin?msg=Configurações+salvas", status_code=303)
+
+
+@app.post("/admin/test-llm", response_class=HTMLResponse)
+def admin_test_llm(request: Request):
+    _require_same_origin(request)
+    good, message = llm.test_connection(config.effective(get_settings()))
+    return admin(request, msg=message, ok=int(good))
+
+
+@app.post("/admin/retriage")
+def admin_retriage(request: Request):
+    _require_same_origin(request)
+    enqueue_retriage()
+    return RedirectResponse("/admin?msg=Triagem+enfileirada+para+os+achados+pendentes", status_code=303)

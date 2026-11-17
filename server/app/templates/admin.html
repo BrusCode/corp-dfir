@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Configurações</h2>
+{% if msg %}<p style="padding:8px;background:{{ '#e7f6ec' if ok else '#fdecea' }}">{{ msg }}</p>{% endif %}
+<form method="post" action="/admin" style="background:#fff;padding:16px;max-width:760px">
+  <h3>Empresa</h3>
+  <label>CNPJs da própria empresa (separados por vírgula)<br>
+    <input name="own_cnpjs" value="{{ own_cnpjs }}" style="width:100%" placeholder="11.222.333/0001-81, 44.555.666/0001-77"></label>
+  <p class="muted">Certificados destes CNPJs aparecem como "cert_proprio" (baixa). Os demais, como "cert_terceiro". Vale para coletas processadas após salvar.</p>
+
+  <h3>Triagem por IA (opcional)</h3>
+  <label>URL da API (compatível com OpenAI)<br>
+    <input name="llm_base_url" value="{{ llm_base_url }}" style="width:100%" placeholder="https://openrouter.ai/api/v1"></label><br><br>
+  <label>Modelo<br>
+    <input name="llm_model" value="{{ llm_model }}" style="width:100%" placeholder="ex.: deepseek/deepseek-chat"></label><br><br>
+  <label>Chave da API {% if key_set %}<span class="muted">(configurada: {{ key_hint or "••••" }}. Deixe em branco para manter)</span>{% endif %}<br>
+    <input name="llm_api_key" type="password" autocomplete="off" style="width:100%" placeholder="{{ 'manter a atual' if key_set else 'sk-or-v1-...' }}"></label>
+  {% if key_set %}<label><input type="checkbox" name="clear_key" value="1"> remover a chave salva</label>{% endif %}<br><br>
+  <label>Score mínimo para enviar à IA (alta=5, média=3, baixa=1)<br>
+    <input name="llm_min_score" value="{{ llm_min_score }}" size="3"></label>
+  <p class="muted">Só o contexto dos achados vai para o modelo, com segredos mascarados. Na OpenRouter, a chamada exige provedores que não guardam nem treinam com os dados (data_collection: deny). Ainda assim, é um serviço externo.</p>
+  <button>Salvar</button>
+</form>
+<div style="margin-top:12px;display:flex;gap:8px">
+  <form method="post" action="/admin/test-llm"><button {% if not llm_on %}disabled{% endif %}>Testar conexão com a IA</button></form>
+  <form method="post" action="/admin/retriage"><button {% if not llm_on %}disabled{% endif %}>Rodar triagem nos achados pendentes</button></form>
+</div>
+{% endblock %}

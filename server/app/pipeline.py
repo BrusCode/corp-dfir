@@ -5,7 +5,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from app import db, llm
+from app import config, db, llm
 from app.certs import analyze_cert, describe
 from app.config import Settings
 from app.parsers import parse_file
@@ -24,6 +24,7 @@ def _safe_extract(zpath: Path, dest: Path) -> None:
 
 
 def process_bundle(settings: Settings, collection_id: int) -> dict:
+    settings = config.effective(settings)
     collection = db.get_collection(settings, collection_id)
     host = collection["host"]
     work = settings.work_dir / str(collection_id)
@@ -92,3 +93,18 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
+
+
+def retriage_pending(settings: Settings) -> int:
+    """Run (or rerun after errors) the LLM triage on stored findings above the threshold."""
+    settings = config.effective(settings)
+    if not llm.enabled(settings):
+        return 0
+    rules = load_rules()
+    done = 0
+    for finding in db.findings_for_triage(settings, settings.llm_min_score):
+        result = llm.triage_finding(settings, finding, rules)
+        if result:
+            db.set_triage(settings, finding["id"], *result)
+            done += 1
+    return done
