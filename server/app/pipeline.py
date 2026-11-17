@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 from app import db, llm
+from app.certs import analyze_cert, describe
 from app.config import Settings
 from app.parsers import parse_file
 from app.rules import load_rules, scan_text
@@ -57,6 +58,28 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                         location=event.location, text=stored_text[:100_000], **ctx)
                     stats["events"] += 1
                     for f in findings:
+                        db.insert_finding(con, collection_id, event_id, f, **ctx)
+                        stats["findings"] += 1
+        certs_file = work / "certs.json"
+        if certs_file.exists():
+            records = json.loads(certs_file.read_text(encoding="utf-8-sig") or "[]")
+            if isinstance(records, dict):
+                records = [records]
+            with db.connect(settings) as con:
+                for record in records:
+                    found = analyze_cert(record, set(settings.own_cnpjs))
+                    verdict = ",".join(sorted({f.rule_id for f in found}))
+                    db.insert_certificate(con, collection_id, host, record, verdict)
+                    if not found:
+                        continue
+                    ctx = {"host": host, "profile": record.get("profile"),
+                           "source": "certificado", "ts": record.get("file_created"),
+                           "original_path": record.get("path") or record.get("origin")}
+                    event_id = db.insert_event(con, collection_id, category="certificado",
+                                               role=None, location=record.get("origin"),
+                                               text=describe(record), **ctx)
+                    stats["events"] += 1
+                    for f in found:
                         db.insert_finding(con, collection_id, event_id, f, **ctx)
                         stats["findings"] += 1
         if llm.enabled(settings):

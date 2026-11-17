@@ -1,6 +1,7 @@
 """Settings from environment variables (populated by deploy/.env)."""
 
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +17,7 @@ class Settings:
     llm_model: str
     llm_min_score: int
     max_upload_bytes: int
+    own_cnpjs: frozenset
 
     @property
     def db_path(self) -> Path:
@@ -42,4 +44,7 @@ def get_settings() -> Settings:
         llm_model=os.environ.get("LLM_MODEL", ""),
         llm_min_score=int(os.environ.get("LLM_MIN_SCORE", "5")),
         max_upload_bytes=int(os.environ.get("DFIR_MAX_UPLOAD_BYTES", str(2_200 * 1024 * 1024))),
+        own_cnpjs=frozenset(
+            re.sub(r"\D", "", c) for c in os.environ.get("DFIR_OWN_CNPJS", "").split(",") if c.strip()
+        ),
     )

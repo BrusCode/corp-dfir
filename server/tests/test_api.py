@@ -79,4 +79,5 @@ def test_dashboard_and_exports(client, settings, tmp_path):
     assert csv.status_code == 200 and "openrouter_key" in csv.text and KEY not in csv.text
     assert client.get("/secrets").status_code == 200
     assert client.get("/remote").status_code == 200
+    assert client.get("/certs").status_code == 200
     assert client.get("/healthz").json() == {"ok": True}

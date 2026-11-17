@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS findings (
   masked TEXT, fingerprint TEXT, original_path TEXT,
   triage_label TEXT, triage_reason TEXT
 );
+CREATE TABLE IF NOT EXISTS certificates (
+  id INTEGER PRIMARY KEY, collection_id INTEGER NOT NULL REFERENCES collections(id),
+  host TEXT, profile TEXT, origin TEXT, path TEXT, readable INTEGER, thumbprint TEXT,
+  subject TEXT, issuer TEXT, cnpj TEXT, not_after TEXT, has_private_key INTEGER,
+  file_sha256 TEXT, file_created TEXT, zone_id INTEGER, host_url TEXT, referrer_url TEXT,
+  verdict TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_coll ON events(collection_id);
 """
@@ -175,3 +182,29 @@ def correlated_secrets(settings) -> list[dict]:
             " FROM findings WHERE fingerprint IS NOT NULL"
             " GROUP BY fingerprint ORDER BY hosts DESC, occurrences DESC")
         return [dict(r) for r in rows]
+
+
+def insert_certificate(con, collection_id: int, host: str, record: dict, verdict: str) -> None:
+    con.execute(
+        "INSERT INTO certificates (collection_id, host, profile, origin, path, readable,"
+        " thumbprint, subject, issuer, cnpj, not_after, has_private_key, file_sha256,"
+        " file_created, zone_id, host_url, referrer_url, verdict)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (collection_id, host, record.get("profile"), record.get("origin"), record.get("path"),
+         int(bool(record.get("readable"))), record.get("thumbprint"), record.get("subject"),
+         record.get("issuer"), record.get("cnpj"), record.get("not_after"),
+         int(bool(record.get("has_private_key"))), record.get("file_sha256"),
+         record.get("file_created"), record.get("zone_id"), record.get("host_url"),
+         record.get("referrer_url"), verdict),
+    )
+
+
+def list_certificates(settings, host=None, only_flagged=True) -> list[dict]:
+    query, params = "SELECT * FROM certificates WHERE 1=1", []
+    if only_flagged:
+        query += " AND verdict != ''"
+    if host:
+        query += " AND host=?"
+        params.append(host)
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(query + " ORDER BY host, cnpj", params)]

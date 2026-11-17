@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Certificados encontrados</h2>
+<p class="muted">Somente metadados; nenhuma chave privada é coletada. "cert_terceiro" = CNPJ que não é da empresa; "cert_baixado" = arquivo com origem de download registrada pelo Windows.</p>
+<form class="filters" method="get"><input name="host" placeholder="host" value="{{ host }}"><button>Filtrar</button></form>
+<table>
+  <tr><th>Host / perfil</th><th>Veredito</th><th>Titular / CNPJ</th><th>Emissor</th><th>Chave privada</th><th>Validade</th><th>Origem do download</th><th>Local</th></tr>
+  {% for c in rows %}
+  <tr>
+    <td>{{ c.host }}<div class="muted">{{ c.profile }}</div></td>
+    <td class="{% if 'terceiro' in c.verdict or 'baixado' in c.verdict or 'suspeita' in c.verdict or 'protegido' in c.verdict %}sev-alta{% endif %}">{{ c.verdict }}</td>
+    <td class="snip">{{ c.subject or "(não legível)" }}{% if c.cnpj %}<div><strong>{{ c.cnpj }}</strong></div>{% endif %}</td>
+    <td class="snip muted">{{ c.issuer or "" }}</td>
+    <td>{{ "sim" if c.has_private_key else "não" }}</td>
+    <td>{{ (c.not_after or "")[:10] }}</td>
+    <td class="snip">{{ c.host_url or "" }}{% if c.referrer_url %}<div class="muted">ref: {{ c.referrer_url }}</div>{% endif %}{% if c.file_created %}<div class="muted">criado {{ c.file_created[:19] }}</div>{% endif %}</td>
+    <td class="snip muted">{{ c.origin }} {{ c.path or "" }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="muted">Nenhum certificado sinalizado.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

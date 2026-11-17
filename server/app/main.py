@@ -150,6 +150,12 @@ def remote(request: Request, host: str = ""):
                                       {"rows": db.remote_events(get_settings(), host), "host": host})
 
 
+@app.get("/certs", response_class=HTMLResponse)
+def certs(request: Request, host: str = ""):
+    return templates.TemplateResponse(request, "certs.html",
+                                      {"rows": db.list_certificates(get_settings(), host), "host": host})
+
+
 @app.get("/export/findings.csv")
 def export_csv(host: str = "", severity: str = "", category: str = ""):
     rows = db.list_findings(get_settings(), host=host, severity=severity, category=category,
