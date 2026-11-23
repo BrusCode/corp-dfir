@@ -20,6 +20,19 @@ Os dados ficam na rede local: o servidor roda numa máquina Ubuntu de gestão, s
    - certificados (CNPJs de terceiros e de onde foram baixados);
    - exportação CSV/JSON.
 
+## Relatório e análise por IA
+
+- **Relatório** (menu "Relatório"):
+  - página formatada por máquina ou geral;
+  - indicadores no topo: certificados de terceiros com chave, PFX em disco, senha no nome do arquivo e certificados de API bancária;
+  - tabelas de certificados, linha do tempo, achados, acessos remotos, segredos e cadeia de custódia;
+  - "Imprimir / salvar PDF" e "Baixar HTML" geram um arquivo autocontido para enviar à diretoria.
+- **Análise por IA** ("Solicitar análise por IA" no relatório):
+  - a IA recebe o resumo dos mesmos dados do relatório, com segredos mascarados;
+  - escreve resumo executivo, riscos, evidências, limitações, recomendações e próximos passos;
+  - a análise fica guardada e entra no relatório na seção "Análise dos resultados".
+- **Contexto da empresa** (Configurações): descreva o que é rotina no suporte. O texto vai junto em toda triagem e análise, para a IA separar o rotineiro do anômalo.
+
 ## Garantias
 
 - Chaves privadas de certificados **nunca** são copiadas.

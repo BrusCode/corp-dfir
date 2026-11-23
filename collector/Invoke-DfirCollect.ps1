@@ -13,6 +13,9 @@
   SHA-1 thumbprint of the server certificate (printed by install.sh). Recommended.
 .PARAMETER TestConnection
   Only checks that the server is reachable and the token is valid.
+.PARAMETER SemIA
+  Skips AI agent conversations (Claude, Codex, Gemini/Antigravity, Cursor, VS Code, ...);
+  keeps remote access logs, loose secrets and certificates.
 .PARAMETER DryRun
   Lists what would be collected, without copying or sending.
 
@@ -27,6 +30,7 @@ param(
     [int]$Port = 8443,
     [string]$CertThumbprint = "",
     [switch]$TestConnection,
+    [switch]$SemIA,
     [switch]$DryRun
 )
 
@@ -40,7 +44,7 @@ trap {
 }
 $ProgressPreference = "SilentlyContinue"
 
-$CollectorVersion = "1.2.0"
+$CollectorVersion = "1.3.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Única exceção do Bitdefender.
 $MaxFileBytes = 200MB
 $MaxBundleBytes = 2GB
@@ -366,6 +370,14 @@ foreach ($p in $profiles) {
 }
 foreach ($s in $SystemSources) {
     Add-Candidates (Get-FilesBounded $s.Path $s.Filter $s.Depth) "_system" $s.Cat
+}
+
+# -SemIA: drop AI agent conversation sources before copying anything.
+if ($SemIA) {
+    $kept = New-Object System.Collections.Generic.List[object]
+    foreach ($cand in $candidates) { if ($cand.Cat -ne "ia") { $kept.Add($cand) } }
+    "SEMIA: {0} arquivo(s) de conversas de IA ignorados" -f ($candidates.Count - $kept.Count)
+    $candidates = $kept
 }
 
 # Remove duplicates (overlapping filters).

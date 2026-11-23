@@ -7,6 +7,15 @@ from app.rules import SEVERITY_SCORE, Finding
 ICP_HINT = re.compile(r"(?i)icp-brasil|\bAC\b|autoridade certificadora|serasa|certisign|soluti|valid|safeweb")
 UNTRUSTED_ROOT_HINT = re.compile(r"(?i)icp-brasil|banco|sicoob|itau|bradesco|caixa|santander|sefaz|receita")
 CPF_IN_SUBJECT = re.compile(r":(\d{11})\b")
+# Official ICP-Brasil roots (ITI). Name match is not proof, so they become a low "check the
+# fingerprint against ITI's publication" item instead of a high alert.
+OFFICIAL_ICP_ROOT = re.compile(
+    r"(?i)CN=Autoridade Certificadora Raiz Brasileira v\d+,\s*OU=Instituto Nacional de Tecnologia da Informacao - ITI")
+# Password written in a certificate file name (e.g. "POSTO X - Pr123456.pfx", "senha 1234").
+PASSWORD_IN_NAME = re.compile(r"(?i)(senha|password|\bpwd\b|\bpass\b|\bpr\d{4,8}\b)")
+# Bank API client certificates (mTLS for Pix/boleto APIs), not ICP-Brasil.
+BANK_API_ISSUER = re.compile(
+    r"(?i)itau|sts-s\d+|bradesco|santander|sicoob|sicredi|banco do brasil|caixa econ|banco inter|btg|c6 bank|cora|stone")
 
 
 def _finding(rule_id: str, severity: str, snippet: str, thumbprint: str | None) -> Finding:
@@ -40,8 +49,16 @@ def analyze_cert(record: dict, own_cnpjs: set[str]) -> list[Finding]:
         # Trusted roots: alert only on roots that imitate ICP/banks (MITM like the PIX scam).
         subject = record.get("subject") or ""
         if UNTRUSTED_ROOT_HINT.search(subject) and record.get("subject") == record.get("issuer"):
-            findings.append(_finding("cert_raiz_suspeita", "alta", text, thumb))
+            if OFFICIAL_ICP_ROOT.search(subject):
+                findings.append(_finding("cert_raiz_icp_conferir", "baixa", text, thumb))
+            else:
+                findings.append(_finding("cert_raiz_suspeita", "alta", text, thumb))
         return findings
+
+    file_name = (record.get("path") or "").replace("/", "\\").rsplit("\\", 1)[-1]
+    if origin == "file" and PASSWORD_IN_NAME.search(file_name):
+        findings.append(_finding("cert_senha_no_nome", "alta", f"senha aparente no nome do arquivo | {text}",
+                                 thumb or record.get("file_sha256")))
 
     if not record.get("readable"):
         if record.get("extension") in (".pfx", ".p12", ".key"):
@@ -55,6 +72,8 @@ def analyze_cert(record: dict, own_cnpjs: set[str]) -> list[Finding]:
         else:
             severity = "alta" if record.get("has_private_key") else "media"
             findings.append(_finding("cert_terceiro", severity, text, thumb))
+    elif BANK_API_ISSUER.search(record.get("issuer") or "") and "icp-brasil" not in (record.get("issuer") or "").lower():
+        findings.append(_finding("cert_api_bancaria", "alta", f"certificado de API bancária | {text}", thumb))
     elif ICP_HINT.search(record.get("issuer") or "") and record.get("has_private_key"):
         findings.append(_finding("cert_icp_sem_cnpj", "media", text, thumb))
 

@@ -81,3 +81,7 @@ Desde a versão 1.1 (principal) e cert-1.1.0 (certificados), os dois scripts inf
   - **sem sinal há +10 min**: o script travou, a máquina desligou ou perdeu a rede.
 - O envio do progresso tem tempo-limite de 5 s e não interrompe a coleta se o painel estiver fora do ar.
 - Execuções iniciadas com versões anteriores dos scripts não aparecem nessa página.
+
+## Coletor principal sem conversas de IA
+
+Adicione `-SemIA` aos argumentos do coletor principal (1.3.0+). Ele deixa de coletar conversas de agentes de IA e mantém os logs de acesso remoto, segredos soltos (`.env`, históricos de terminal) e o inventário de certificados.

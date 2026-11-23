@@ -79,6 +79,11 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                     for f in found:
                         db.insert_finding(con, collection_id, event_id, f, **ctx)
                         stats["findings"] += 1
+                # Without the certificate collector's activity file (e.g. a bundle from the main
+                # collector), build the timeline from the inventory dates.
+                if not (work / "cert_activity.json").exists():
+                    for record in records:
+                        _inventory_timeline_event(con, collection_id, host, record, stats)
         activity_file = work / "cert_activity.json"
         if activity_file.exists():
             records = json.loads(activity_file.read_text(encoding="utf-8-sig") or "[]")
@@ -126,3 +131,24 @@ def retriage_pending(settings: Settings) -> int:
             db.set_triage(settings, finding["id"], *result)
             done += 1
     return done
+
+
+def _inventory_timeline_event(con, collection_id: int, host: str, record: dict, stats: dict) -> None:
+    origin = record.get("origin") or ""
+    if not record.get("file_created"):
+        return
+    if origin.startswith("store:CurrentUser"):
+        kind, what = "certificado_instalado", "instalado no repositório do usuário"
+    elif origin == "file":
+        kind, what = "arquivo_certificado", "arquivo criado na máquina"
+    else:
+        return
+    detail = what
+    if record.get("host_url"):
+        detail += f"; baixado de {record['host_url']}"
+    text = " | ".join(x for x in (kind, record.get("subject") or "", record.get("path") or "", detail) if x)
+    db.insert_event(con, collection_id, category="certificado_atividade", role=kind,
+                    location="inventario", text=text[:4000], host=host,
+                    profile=record.get("profile"), source="inventario",
+                    ts=record.get("file_created"), original_path=record.get("path") or origin)
+    stats["events"] += 1

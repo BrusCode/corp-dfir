@@ -81,8 +81,11 @@ def triage_finding(settings: Settings, finding: dict, rules: list[Rule],
         f"Host: {finding['host']} | Perfil: {finding['profile']} | Fonte: {finding['source']}\n"
         f"Trecho: {finding['snippet']}\n\nContexto:\n{transcript[:12000]}"
     )
+    system = PROMPT
+    if settings.company_context:
+        system += "\n\nContexto da empresa (use para separar o rotineiro do anômalo):\n" + settings.company_context[:3000]
     try:
-        answer = chat(settings, content, client=client)
+        answer = chat(settings, content, system=system, client=client)
         start, end = answer.find("{"), answer.rfind("}")
         parsed = json.loads(answer[start : end + 1])
         label = parsed.get("label") if parsed.get("label") in LABELS else "suspeito"

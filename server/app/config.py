@@ -18,6 +18,7 @@ class Settings:
     llm_min_score: int
     max_upload_bytes: int
     own_cnpjs: frozenset
+    company_context: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -63,6 +64,8 @@ def effective(settings: Settings) -> Settings:
     for key in ("llm_base_url", "llm_api_key", "llm_model"):
         if key in o:
             changes[key] = o[key].rstrip("/") if key == "llm_base_url" else o[key]
+    if "company_context" in o:
+        changes["company_context"] = o["company_context"]
     if o.get("llm_min_score", "").isdigit():
         changes["llm_min_score"] = int(o["llm_min_score"])
     return replace(settings, **changes)

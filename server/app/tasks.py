@@ -2,7 +2,7 @@
 
 from taskiq_redis import ListQueueBroker
 
-from app import db
+from app import analysis, db
 from app.config import get_settings
 from app.pipeline import process_bundle, retriage_pending
 
@@ -21,3 +21,10 @@ def retriage() -> int:
     settings = get_settings()
     db.init_db(settings)
     return retriage_pending(settings)
+
+
+@broker.task(task_name="run_analysis", retry_on_error=False)
+def run_analysis(analysis_id: int) -> None:
+    settings = get_settings()
+    db.init_db(settings)
+    analysis.run_analysis(settings, analysis_id)

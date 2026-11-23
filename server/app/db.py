@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS run_events (
   percent INTEGER, detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id);
+CREATE TABLE IF NOT EXISTS analyses (
+  id INTEGER PRIMARY KEY, scope_host TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+  created_at TEXT NOT NULL, finished_at TEXT, model TEXT, text TEXT, error TEXT, stats TEXT
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_coll ON events(collection_id);
@@ -316,3 +320,47 @@ def run_history(settings, run_id: str) -> list[dict]:
     with connect(settings) as con:
         return [dict(r) for r in con.execute(
             "SELECT * FROM run_events WHERE run_id=? ORDER BY id", (run_id,))]
+
+
+def create_analysis(settings, scope_host: str = "") -> int:
+    with connect(settings) as con:
+        cur = con.execute("INSERT INTO analyses (scope_host, status, created_at) VALUES (?, 'pendente', ?)",
+                          (scope_host or "", datetime.now(timezone.utc).isoformat()))
+        return cur.lastrowid
+
+
+def finish_analysis(settings, analysis_id: int, *, text: str, model: str, stats: dict) -> None:
+    with connect(settings) as con:
+        con.execute("UPDATE analyses SET status='concluida', finished_at=?, model=?, text=?, stats=?,"
+                    " error=NULL WHERE id=?", (datetime.now(timezone.utc).isoformat(), model, text,
+                                               json.dumps(stats), analysis_id))
+
+
+def fail_analysis(settings, analysis_id: int, error: str) -> None:
+    with connect(settings) as con:
+        con.execute("UPDATE analyses SET status='erro', finished_at=?, error=? WHERE id=?",
+                    (datetime.now(timezone.utc).isoformat(), error[:1000], analysis_id))
+
+
+def get_analysis(settings, analysis_id: int) -> dict | None:
+    with connect(settings) as con:
+        row = con.execute("SELECT * FROM analyses WHERE id=?", (analysis_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_analyses(settings, scope_host: str = "", limit: int = 20) -> list[dict]:
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM analyses WHERE scope_host=? ORDER BY id DESC LIMIT ?", (scope_host or "", limit))]
+
+
+def latest_analysis(settings, scope_host: str = "") -> dict | None:
+    with connect(settings) as con:
+        row = con.execute("SELECT * FROM analyses WHERE scope_host=? AND status='concluida'"
+                          " ORDER BY id DESC LIMIT 1", (scope_host or "",)).fetchone()
+        return dict(row) if row else None
+
+
+def list_hosts(settings) -> list[str]:
+    with connect(settings) as con:
+        return [r[0] for r in con.execute("SELECT DISTINCT host FROM collections ORDER BY host")]

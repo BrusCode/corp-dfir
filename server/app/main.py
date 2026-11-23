@@ -1,6 +1,7 @@
 """HTTP API (upload from the collector) and read-only dashboard."""
 
 import csv
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import io
@@ -16,7 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 from fastapi.templating import Jinja2Templates
 
-from app import config, db, llm
+from app import analysis, config, db, llm
 from app.config import get_settings
 
 
@@ -54,6 +55,10 @@ def enqueue(collection_id: int) -> None:
 
 def enqueue_retriage() -> None:
     _kick("retriage")
+
+
+def enqueue_analysis(analysis_id: int) -> None:
+    _kick("run_analysis", analysis_id)
 
 
 def _require_same_origin(request: Request) -> None:
@@ -257,6 +262,7 @@ def admin(request: Request, msg: str = "", ok: int = 1):
         "key_set": bool(eff.llm_api_key),
         "key_hint": (eff.llm_api_key[:9] + "…" + eff.llm_api_key[-4:]) if len(eff.llm_api_key) > 16 else "",
         "llm_on": llm.enabled(eff),
+        "company_context": eff.company_context,
         "msg": msg, "ok": ok,
     })
 
@@ -270,6 +276,7 @@ def admin_save(
     llm_api_key: str = Form(""),
     llm_min_score: str = Form("5"),
     clear_key: str = Form(""),
+    company_context: str = Form(""),
 ):
     _require_same_origin(request)
     settings = get_settings()
@@ -277,6 +284,7 @@ def admin_save(
     db.set_setting(settings, "llm_base_url", llm_base_url.strip())
     db.set_setting(settings, "llm_model", llm_model.strip())
     db.set_setting(settings, "llm_min_score", llm_min_score.strip() if llm_min_score.strip().isdigit() else "5")
+    db.set_setting(settings, "company_context", company_context.strip()[:5000])
     if clear_key:
         db.set_setting(settings, "llm_api_key", "")
     elif llm_api_key.strip():
@@ -296,3 +304,78 @@ def admin_retriage(request: Request):
     _require_same_origin(request)
     enqueue_retriage()
     return RedirectResponse("/admin?msg=Triagem+enfileirada+para+os+achados+pendentes", status_code=303)
+
+
+# --- Relatório ----------------------------------------------------------------------------
+SEVERITY_ORDER = {"alta": 0, "media": 1, "baixa": 2}
+
+
+def _report_context(host: str, download: bool) -> dict:
+    settings = get_settings()
+    scope = host or None
+    findings = db.list_findings(settings, host=scope, limit=20_000)
+    certs = db.list_certificates(settings, scope)
+    collections = [c for c in db.list_collections(settings) if not host or c["host"] == host]
+    for c in collections:
+        try:
+            c["custody_data"] = json.loads(c.get("custody") or "{}")
+        except ValueError:
+            c["custody_data"] = {}
+    latest = db.latest_analysis(settings, host)
+    sev = {k: 0 for k in SEVERITY_ORDER}
+    for f in findings:
+        sev[f["severity"]] = sev.get(f["severity"], 0) + 1
+    by_rule: dict[str, int] = {}
+    for f in findings:
+        by_rule[f["rule_id"]] = by_rule.get(f["rule_id"], 0) + 1
+    verdicts = " ".join(c["verdict"] or "" for c in certs)
+    return {
+        "host": host,
+        "hosts": db.list_hosts(settings),
+        "download": download,
+        "generated_at": datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        "kpis": {
+            "coletas": len(collections),
+            "maquinas": len({c["host"] for c in collections}),
+            "achados_alta": sev.get("alta", 0),
+            "achados_media": sev.get("media", 0),
+            "cert_terceiros_chave": sum(1 for c in certs if "cert_terceiro" in (c["verdict"] or "") and c["has_private_key"]),
+            "pfx_expostos": sum(1 for c in certs if c["origin"] == "file" and c["has_private_key"]),
+            "senha_no_nome": verdicts.count("cert_senha_no_nome"),
+            "api_bancaria": verdicts.count("cert_api_bancaria"),
+        },
+        "by_rule": sorted(by_rule.items(), key=lambda kv: -kv[1]),
+        "certs": sorted(certs, key=lambda c: (c["host"], 0 if "terceiro" in (c["verdict"] or "") else 1, c["path"] or "")),
+        "findings": sorted(findings, key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["host"]))[:500],
+        "activity": db.list_cert_activity(settings, scope, limit=1000),
+        "remote": db.remote_events(settings, scope)[:500],
+        "secrets": [s for s in db.correlated_secrets(settings)
+                    if not host or host in (s.get("host_list") or "").split(",")],
+        "collections": collections,
+        "analysis": latest,
+        "analysis_html": analysis.render_markdown(latest["text"]) if latest else "",
+        "analyses": db.list_analyses(settings, host, 5),
+        "llm_on": llm.enabled(config.effective(settings)),
+    }
+
+
+@app.get("/report", response_class=HTMLResponse)
+def report(request: Request, host: str = ""):
+    return templates.TemplateResponse(request, "report.html", _report_context(host, download=False))
+
+
+@app.get("/report/download")
+def report_download(request: Request, host: str = ""):
+    resp = templates.TemplateResponse(request, "report.html", _report_context(host, download=True))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    name = f"relatorio-corp-dfir-{SAFE_NAME.sub('_', host) or 'geral'}-{stamp}.html"
+    resp.headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    return resp
+
+
+@app.post("/report/analyze")
+def report_analyze(request: Request, host: str = Form("")):
+    _require_same_origin(request)
+    analysis_id = db.create_analysis(get_settings(), host)
+    enqueue_analysis(analysis_id)
+    return RedirectResponse(f"/report?host={host}", status_code=303)

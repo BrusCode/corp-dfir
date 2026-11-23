@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Relatório Corp-DFIR — {{ host or "todas as máquinas" }}</title>
+<style>
+  :root { --ink: #1d2330; --muted: #6b7280; --line: #e3e6ec; --head: #f1f3f7; --red: #b00020; --amber: #b36b00; --blue: #2f6fdb; }
+  * { box-sizing: border-box; }
+  body { font: 13px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; color: var(--ink); margin: 0; background: #fff; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 28px 32px 48px; }
+  .toolbar { background: #1d2330; color: #fff; padding: 10px 32px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .toolbar a, .toolbar button, .toolbar select { font: inherit; }
+  .toolbar a { color: #cfd6e4; text-decoration: none; }
+  .toolbar button { background: #2f6fdb; color: #fff; border: 0; border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+  .toolbar button.secondary { background: #3a4356; }
+  .toolbar form { display: inline-flex; gap: 6px; margin: 0; }
+  header.report { border-bottom: 3px solid var(--ink); padding-bottom: 12px; margin-bottom: 18px; }
+  header.report h1 { font-size: 22px; margin: 0 0 4px; }
+  .meta { color: var(--muted); }
+  h2 { font-size: 16px; margin: 26px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0 4px; }
+  .kpi { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  .kpi .n { font-size: 22px; font-weight: 700; }
+  .kpi .l { color: var(--muted); font-size: 12px; }
+  .kpi.red .n { color: var(--red); } .kpi.amber .n { color: var(--amber); }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 4px; font-size: 12px; }
+  th { background: var(--head); text-align: left; font-weight: 600; }
+  th, td { border-bottom: 1px solid var(--line); padding: 5px 7px; vertical-align: top; }
+  tr { page-break-inside: avoid; }
+  .sev { font-weight: 700; text-transform: uppercase; font-size: 11px; }
+  .sev-alta { color: var(--red); } .sev-media { color: var(--amber); } .sev-baixa { color: var(--muted); }
+  .tag { display: inline-block; background: #eef2fb; color: #23407a; border-radius: 3px; padding: 0 5px; margin: 1px 2px 1px 0; font-size: 11px; }
+  .tag.red { background: #fde8eb; color: var(--red); }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; word-break: break-all; }
+  .muted { color: var(--muted); }
+  .analysis { border: 1px solid #c9d6f2; background: #f7f9fe; border-radius: 6px; padding: 6px 16px 10px; }
+  .analysis h3, .analysis h4 { margin: 12px 0 4px; }
+  .analysis p, .analysis li { margin: 3px 0; }
+  .note { background: #fff8e6; border: 1px solid #f0dfae; border-radius: 6px; padding: 8px 12px; }
+  footer { margin-top: 30px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); padding-top: 8px; }
+  @media print {
+    .toolbar { display: none; }
+    .page { padding: 0; max-width: none; }
+    h2 { page-break-after: avoid; }
+    @page { size: A4 landscape; margin: 12mm; }
+  }
+</style>
+</head>
+<body>
+{% if not download %}
+<div class="toolbar">
+  <a href="/">&larr; Painel</a>
+  <form method="get" action="/report">
+    <select name="host" onchange="this.form.submit()">
+      <option value="">Todas as máquinas</option>
+      {% for h in hosts %}<option value="{{ h }}" {% if h == host %}selected{% endif %}>{{ h }}</option>{% endfor %}
+    </select>
+  </form>
+  <button onclick="window.print()">Imprimir / salvar PDF</button>
+  <a href="/report/download?host={{ host }}"><button class="secondary" type="button">Baixar HTML</button></a>
+  <form method="post" action="/report/analyze">
+    <input type="hidden" name="host" value="{{ host }}">
+    <button class="secondary" {% if not llm_on %}disabled title="Configure a IA em Configurações"{% endif %}>Solicitar análise por IA</button>
+  </form>
+  {% set pending = analyses | selectattr("status", "equalto", "pendente") | list %}
+  {% if pending %}<span>Análise em andamento… <a href="/report?host={{ host }}">atualizar</a></span>{% endif %}
+  {% set errors = analyses[:1] | selectattr("status", "equalto", "erro") | list %}
+  {% if errors %}<span style="color:#ffb4b4">Última análise falhou: {{ errors[0].error }}</span>{% endif %}
+</div>
+{% endif %}
+
+<div class="page">
+<header class="report">
+  <h1>Relatório de investigação — certificados digitais e acessos</h1>
+  <div class="meta">
+    Escopo: <strong>{{ host or "todas as máquinas coletadas" }}</strong> · Gerado em {{ generated_at }} ·
+    Fonte: coletas Corp-DFIR (metadados e hashes; chaves privadas não são copiadas)
+  </div>
+</header>
+
+<div class="kpis">
+  <div class="kpi"><div class="n">{{ kpis.maquinas }}</div><div class="l">máquinas · {{ kpis.coletas }} coleta(s)</div></div>
+  <div class="kpi red"><div class="n">{{ kpis.achados_alta }}</div><div class="l">achados de severidade alta ({{ kpis.achados_media }} média)</div></div>
+  <div class="kpi red"><div class="n">{{ kpis.cert_terceiros_chave }}</div><div class="l">certificados de terceiros instalados/abertos com chave privada</div></div>
+  <div class="kpi red"><div class="n">{{ kpis.pfx_expostos }}</div><div class="l">arquivos PFX/P12 (com chave) salvos em disco</div></div>
+  <div class="kpi amber"><div class="n">{{ kpis.senha_no_nome }}</div><div class="l">arquivos com senha aparente no nome</div></div>
+  <div class="kpi amber"><div class="n">{{ kpis.api_bancaria }}</div><div class="l">certificados de API bancária</div></div>
+  <div class="kpi"><div class="n">{{ activity | length }}</div><div class="l">eventos na linha do tempo</div></div>
+  <div class="kpi"><div class="n">{{ remote | length }}</div><div class="l">registros de acesso remoto</div></div>
+</div>
+
+<h2>Análise dos resultados</h2>
+{% if analysis %}
+<div class="analysis">{{ analysis_html | safe }}</div>
+<p class="muted">Análise gerada por IA ({{ analysis.model }}) em {{ analysis.finished_at[:16].replace("T", " ") }} UTC, a partir dos dados deste relatório, com segredos mascarados. Deve ser validada por um analista.</p>
+{% else %}
+<p class="note">Nenhuma análise registrada para este escopo. Use "Solicitar análise por IA" antes de exportar para incluí-la aqui.</p>
+{% endif %}
+
+<h2>Resumo por tipo de achado</h2>
+<table>
+  <tr><th>Regra</th><th style="width:90px">Ocorrências</th></tr>
+  {% for rule, n in by_rule %}<tr><td>{{ rule }}</td><td>{{ n }}</td></tr>{% else %}<tr><td colspan="2" class="muted">Nenhum achado.</td></tr>{% endfor %}
+</table>
+
+<h2>Certificados sinalizados</h2>
+<table>
+  <tr><th>Máquina / perfil</th><th>Veredito</th><th>Titular / CNPJ</th><th>Emissor</th><th>Chave</th><th>Criado / instalado</th><th>Origem do download</th><th>Local</th></tr>
+  {% for c in certs %}
+  <tr>
+    <td>{{ c.host }}<div class="muted">{{ c.profile or "" }}</div></td>
+    <td>{% for v in (c.verdict or "").split(",") if v %}<span class="tag {% if v in ('cert_terceiro', 'cert_baixado', 'cert_senha_no_nome', 'cert_pfx_protegido', 'cert_api_bancaria', 'cert_raiz_suspeita') %}red{% endif %}">{{ v }}</span>{% endfor %}</td>
+    <td>{{ c.subject or "(não legível sem senha)" }}{% if c.cnpj %}<div><strong>{{ c.cnpj }}</strong></div>{% endif %}</td>
+    <td class="muted">{{ c.issuer or "" }}</td>
+    <td>{{ "sim" if c.has_private_key else "não" }}</td>
+    <td>{{ (c.file_created or "")[:10] }}</td>
+    <td class="mono">{{ c.host_url or "" }}</td>
+    <td class="mono">{{ c.path or c.origin }}</td>
+  </tr>
+  {% else %}<tr><td colspan="8" class="muted">Nenhum certificado sinalizado.</td></tr>{% endfor %}
+</table>
+
+<h2>Linha do tempo de atividade com certificados</h2>
+<table>
+  <tr><th style="width:130px">Quando (UTC)</th><th>Máquina</th><th>Tipo</th><th>Achado</th><th>Detalhe</th></tr>
+  {% for a in activity %}
+  <tr>
+    <td>{{ (a.ts or "")[:16].replace("T", " ") }}</td><td>{{ a.host }}</td><td>{{ a.role }}</td>
+    <td>{% if a.rule_ids %}<span class="tag {% if (a.score or 0) >= 5 %}red{% endif %}">{{ a.rule_ids }}</span>{% endif %}</td>
+    <td>{{ a.text[:300] }}</td>
+  </tr>
+  {% else %}<tr><td colspan="5" class="muted">Nenhum evento registrado.</td></tr>{% endfor %}
+</table>
+
+<h2>Achados</h2>
+<table>
+  <tr><th>Sev.</th><th>Regra</th><th>Máquina</th><th>Quando</th><th>Trecho (segredos mascarados)</th><th>Triagem IA</th></tr>
+  {% for f in findings %}
+  <tr>
+    <td class="sev sev-{{ f.severity }}">{{ f.severity }}</td><td>{{ f.rule_id }}</td><td>{{ f.host }}</td>
+    <td>{{ (f.ts or "")[:10] }}</td><td>{{ f.snippet[:400] }}</td>
+    <td>{% if f.triage_label %}<strong>{{ f.triage_label }}</strong><div class="muted">{{ f.triage_reason or "" }}</div>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="6" class="muted">Nenhum achado.</td></tr>{% endfor %}
+</table>
+{% if findings | length >= 500 %}<p class="muted">Exibindo os 500 achados mais graves. Lista completa: exportação CSV no painel.</p>{% endif %}
+
+<h2>Acessos remotos</h2>
+<table>
+  <tr><th>Máquina</th><th>Ferramenta</th><th>Registro</th></tr>
+  {% for r in remote %}<tr><td>{{ r.host }}</td><td>{{ r.source }}</td><td class="mono">{{ r.text[:300] }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Nenhum registro de acesso remoto.</td></tr>{% endfor %}
+</table>
+
+<h2>Segredos correlacionados entre máquinas</h2>
+<table>
+  <tr><th>Regra</th><th>Valor (mascarado)</th><th>Máquinas</th><th>Ocorrências</th></tr>
+  {% for s in secrets %}<tr><td>{{ s.rule_id }}</td><td class="mono">{{ s.masked or "" }}</td><td>{{ s.host_list }}</td><td>{{ s.occurrences }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Nenhum segredo encontrado.</td></tr>{% endfor %}
+</table>
+
+<h2>Cadeia de custódia</h2>
+<table>
+  <tr><th>Máquina</th><th>Pacote</th><th>Recebido (UTC)</th><th>Coletor</th><th>Conta de execução</th><th>SHA-256 do pacote</th></tr>
+  {% for c in collections %}
+  <tr>
+    <td>{{ c.host }}</td><td class="mono">{{ c.filename }}</td><td>{{ c.received_at[:19].replace("T", " ") }}</td>
+    <td>{{ c.custody_data.get("collector_version", "") }}</td><td>{{ c.custody_data.get("operator", "") }}</td>
+    <td class="mono">{{ c.sha256 }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<footer>
+  Metodologia: coletores executados nas máquinas da empresa como SYSTEM (Tactical RMM), com metadados de certificados
+  (titular, CNPJ, emissor, validade, presença de chave privada, hash e origem de download via Zone.Identifier) e registros
+  do Windows. Arquivos de certificado e chaves privadas não são copiados. Os pacotes recebidos são guardados imutáveis no
+  servidor, com o SHA-256 acima. Segredos aparecem mascarados. Documento confidencial.
+</footer>
+</div>
+</body>
+</html>

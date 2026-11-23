@@ -8,6 +8,10 @@
     <input name="own_cnpjs" value="{{ own_cnpjs }}" style="width:100%" placeholder="11.222.333/0001-81, 44.555.666/0001-77"></label>
   <p class="muted">Certificados destes CNPJs aparecem como "cert_proprio" (baixa). Os demais, como "cert_terceiro". Vale para coletas processadas após salvar.</p>
 
+  <h3>Contexto da empresa (para a IA)</h3>
+  <label>Descreva o que é rotina e o que seria anômalo. Vai junto em toda triagem e análise.<br>
+    <textarea name="company_context" rows="6" style="width:100%" placeholder="Ex.: Somos a WebPosto/Quality. O suporte configura certificados A1 de clientes nas integrações bancárias, mas o procedimento correto é o cliente importar o PFX na própria máquina; certificados de clientes não devem ficar salvos nos PCs do suporte...">{{ company_context }}</textarea></label>
+
   <h3>Triagem por IA (opcional)</h3>
   <label>URL da API (compatível com OpenAI)<br>
     <input name="llm_base_url" value="{{ llm_base_url }}" style="width:100%" placeholder="https://openrouter.ai/api/v1"></label><br><br>
