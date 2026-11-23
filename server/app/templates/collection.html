@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Coleta #{{ c.id }} — {{ c.host }}</h2>
+<p class="muted">{{ c.filename }} · recebida {{ c.received_at | br }} · status {{ c.status }}{% if c.error %} · {{ c.error }}{% endif %}</p>
+{% if stats.get("missing_in_bundle") %}<p class="sev-alta">{{ stats["missing_in_bundle"] }} arquivo(s) do manifesto não foram encontrados dentro do pacote.</p>{% endif %}
+
+<h3>Por tipo</h3>
+<table>
+  <tr><th>Tipo</th><th>Arquivos no manifesto</th><th>Copiados</th><th>Eventos extraídos</th><th>Achados</th></tr>
+  {% for cat, n in counts | dictsort %}
+  <tr><td><a href="?category={{ cat }}">{{ cat }}</a></td><td>{{ n.files }}</td><td>{{ n.copied }}</td><td>{{ n.events }}</td><td>{{ n.findings }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">O pacote não lista arquivos (ex.: coleta só de certificados).</td></tr>{% endfor %}
+</table>
+
+<h3>Arquivos enviados ao servidor</h3>
+<form class="filters" method="get">
+  <select name="category"><option value="">todos os tipos</option>
+    {% for cat in counts | sort %}<option {% if cat == category %}selected{% endif %}>{{ cat }}</option>{% endfor %}</select>
+  <select name="status"><option value="">todos os status</option>
+    {% for st in statuses %}<option {% if st == status %}selected{% endif %}>{{ st }}</option>{% endfor %}</select>
+  <input name="q" placeholder="buscar no caminho" value="{{ q }}" size="30">
+  <button>Filtrar</button>
+</form>
+<table>
+  <tr><th>Tipo</th><th>Perfil</th><th>Caminho original</th><th>Tamanho</th><th>Modificado</th><th>Status</th><th>Eventos</th><th>Achados</th><th>Observação</th></tr>
+  {% for f in files %}
+  <tr>
+    <td>{{ f.category }}</td><td>{{ f.profile }}</td>
+    <td class="snip">{% if f.status == "copied" %}<a href="/collections/{{ c.id }}/file?path={{ f.original_path | urlencode }}">{{ f.original_path }}</a>{% else %}{{ f.original_path }}{% endif %}</td>
+    <td>{{ ((f.size or 0) / 1024) | round(1) }} KB</td>
+    <td>{{ f.mtime | br }}</td>
+    <td>{{ f.status }}</td>
+    <td>{{ f.events }}</td>
+    <td class="{{ 'sev-alta' if f.findings else '' }}">{{ f.findings }}</td>
+    <td class="muted">{{ f.reason or "" }}</td>
+  </tr>
+  {% else %}<tr><td colspan="9" class="muted">Nenhum arquivo com esses filtros.</td></tr>{% endfor %}
+</table>
+<p class="muted">Os arquivos originais ficam no servidor, dentro do pacote de evidência (somente leitura). Aqui aparece o conteúdo extraído, com segredos mascarados.</p>
+{% endblock %}

@@ -28,7 +28,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$CollectorVersion = "cert-1.2.0"
+$CollectorVersion = "cert-1.3.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Mesma exceção do Bitdefender do coletor principal.
 $PauseMs = 50
 $CertExtensions = @(".pfx", ".p12", ".cer", ".crt", ".pem", ".key")
@@ -210,7 +210,7 @@ function Add-Activity([string]$Type, $When, [string]$ProfileName, [string]$Sourc
     $rec = [ordered]@{
         type = $Type; ts = $ts; profile = $ProfileName; source = $Source; path = $Path
         file_name = $(if ($Path) { [IO.Path]::GetFileName($Path) } else { $null })
-        detail = $(if ($Detail.Length -gt 1500) { $Detail.Substring(0, 1500) } else { $Detail })
+        detail = $(if ($Detail.Length -gt 3000) { $Detail.Substring(0, 3000) } else { $Detail })
     }
     if ($Extra) { foreach ($k in $Extra.Keys) { $rec[$k] = $Extra[$k] } }
     Add-Record $script:Activity $rec
@@ -440,6 +440,18 @@ try {
         foreach ($e in $events) {
             $msg = ""
             try { $msg = ($e.Message -replace "\s+", " ") } catch { }
+            # The message often just says "see Details": the certificate (subject, thumbprint,
+            # key name, operation) is in the event's EventData/UserData fields.
+            try {
+                $xml = [xml]$e.ToXml()
+                $pairs = New-Object System.Collections.Generic.List[string]
+                foreach ($node in $xml.SelectNodes("//*[local-name()='EventData' or local-name()='UserData']//*[not(*)]")) {
+                    $name = $(if ($node.Attributes -and $node.Attributes["Name"]) { $node.Attributes["Name"].Value } else { $node.LocalName })
+                    $val = ([string]$node.InnerText).Trim()
+                    if ($val) { $pairs.Add(("{0}={1}" -f $name, $val)) }
+                }
+                if ($pairs.Count -gt 0) { $msg = ("{0} | dados: {1}" -f $msg, ($pairs -join "; ")) }
+            } catch { }
             if ($filter.LogName -like "*CAPI2*" -and $msg -notmatch "(?i)private key|chave privada|pfx|export") { continue }
             Add-Activity "evento_windows" $e.TimeCreated "_system" $filter.LogName $null $msg `
                 @{ event_id = $e.Id; record_id = $e.RecordId; user_sid = $(if ($e.UserId) { $e.UserId.Value } else { $null }) }

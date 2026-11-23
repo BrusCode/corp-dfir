@@ -12,8 +12,8 @@
     <td class="snip">{{ c.subject or "(não legível)" }}{% if c.cnpj %}<div><strong>{{ c.cnpj }}</strong></div>{% endif %}</td>
     <td class="snip muted">{{ c.issuer or "" }}</td>
     <td>{{ "sim" if c.has_private_key else "não" }}</td>
-    <td>{{ (c.not_after or "")[:10] }}</td>
-    <td class="snip">{{ c.host_url or "" }}{% if c.referrer_url %}<div class="muted">ref: {{ c.referrer_url }}</div>{% endif %}{% if c.file_created %}<div class="muted">criado {{ c.file_created[:19] }}</div>{% endif %}</td>
+    <td>{{ (c.not_after | br(False))[:10] }}</td>
+    <td class="snip">{{ c.host_url or "" }}{% if c.referrer_url %}<div class="muted">ref: {{ c.referrer_url }}</div>{% endif %}{% if c.file_created %}<div class="muted">criado {{ c.file_created | br }}</div>{% endif %}</td>
     <td class="snip muted">{{ c.origin }} {{ c.path or "" }}</td>
   </tr>
   {% else %}
@@ -21,12 +21,12 @@
   {% endfor %}
 </table>
 <h2>Atividade com certificados (linha do tempo)</h2>
-<p class="muted">Quando e como certificados foram abertos, importados, exportados, transferidos por acesso remoto ou apagados. Horários em UTC, como registrados na máquina.</p>
+<p class="muted">Quando e como certificados foram abertos, importados, exportados, transferidos por acesso remoto ou apagados. Horários de Brasília (UTC-3).</p>
 <table>
   <tr><th>Quando</th><th>Host / perfil</th><th>Tipo</th><th>Achado</th><th>Detalhe</th><th>Origem</th></tr>
   {% for a in activity %}
   <tr>
-    <td>{{ (a.ts or "")[:19] }}</td>
+    <td>{{ a.ts | br }}</td>
     <td>{{ a.host }}<div class="muted">{{ a.profile or "" }}</div></td>
     <td>{{ a.role }}</td>
     <td class="{% if (a.score or 0) >= 5 %}sev-alta{% elif (a.score or 0) >= 3 %}sev-media{% endif %}">{{ a.rule_ids or "" }}</td>

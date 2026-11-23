@@ -68,7 +68,8 @@ def connect(settings: Settings):
         con.close()
 
 
-MIGRATIONS = ["ALTER TABLE collections ADD COLUMN stats TEXT"]
+MIGRATIONS = ["ALTER TABLE collections ADD COLUMN stats TEXT",
+              "ALTER TABLE files ADD COLUMN note TEXT"]
 
 
 def init_db(settings: Settings) -> None:
@@ -386,3 +387,49 @@ def latest_analysis(settings, scope_host: str = "") -> dict | None:
 def list_hosts(settings) -> list[str]:
     with connect(settings) as con:
         return [r[0] for r in con.execute("SELECT DISTINCT host FROM collections ORDER BY host")]
+
+
+def set_file_note(con, collection_id: int, original_path: str, note: str) -> None:
+    con.execute("UPDATE files SET note=? WHERE collection_id=? AND original_path=?",
+                (note, collection_id, original_path))
+
+
+def list_collection_files(settings, collection_id: int, category=None, q=None, status=None) -> list[dict]:
+    query = ("SELECT f.*, f.note AS reason,"
+             " (SELECT COUNT(*) FROM events e WHERE e.collection_id=f.collection_id"
+             "  AND e.original_path=f.original_path) AS events,"
+             " (SELECT COUNT(*) FROM findings x WHERE x.collection_id=f.collection_id"
+             "  AND x.original_path=f.original_path) AS findings"
+             " FROM files f WHERE f.collection_id=?")
+    params: list = [collection_id]
+    if category:
+        query += " AND f.category=?"
+        params.append(category)
+    if status:
+        query += " AND f.status=?"
+        params.append(status)
+    if q:
+        query += " AND lower(f.original_path) LIKE ?"
+        params.append(f"%{q.lower()}%")
+    query += " ORDER BY f.category, f.original_path"
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(query, params)]
+
+
+def collection_file(settings, collection_id: int, original_path: str) -> dict | None:
+    rows = [r for r in list_collection_files(settings, collection_id) if r["original_path"] == original_path]
+    return rows[0] if rows else None
+
+
+def file_events(settings, collection_id: int, original_path: str, limit: int = 2000) -> list[dict]:
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM events WHERE collection_id=? AND original_path=? ORDER BY id LIMIT ?",
+            (collection_id, original_path, limit))]
+
+
+def file_findings(settings, collection_id: int, original_path: str) -> list[dict]:
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM findings WHERE collection_id=? AND original_path=? ORDER BY score DESC, id",
+            (collection_id, original_path))]

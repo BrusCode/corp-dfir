@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/collections/{{ cid }}">&larr; Coleta #{{ cid }}</a></p>
+<h2 class="snip" style="font-size:15px">{{ f.original_path }}</h2>
+<p class="muted">{{ f.category }} · perfil {{ f.profile }} · {{ ((f.size or 0) / 1024) | round(1) }} KB · modificado {{ f.mtime | br }} · SHA-256 {{ f.sha256 }}</p>
+
+<h3>Achados neste arquivo ({{ findings | length }})</h3>
+<table>
+  <tr><th>Sev.</th><th>Regra</th><th>Trecho</th><th>Triagem IA</th></tr>
+  {% for x in findings %}
+  <tr><td class="sev-{{ x.severity }}">{{ x.severity }}</td><td>{{ x.rule_id }}</td><td class="snip">{{ x.snippet }}</td>
+      <td>{{ x.triage_label or "" }}<div class="muted">{{ x.triage_reason or "" }}</div></td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Nenhum achado.</td></tr>{% endfor %}
+</table>
+
+<h3>Conteúdo extraído ({{ events | length }} evento(s){% if events | length >= 2000 %}, primeiros 2000{% endif %})</h3>
+<table>
+  <tr><th style="width:150px">Quando</th><th style="width:90px">Papel</th><th>Texto (segredos mascarados)</th></tr>
+  {% for e in events %}
+  <tr><td>{{ e.ts | br }}</td><td>{{ e.role or e.source or "" }}</td><td class="snip" style="white-space:pre-wrap">{{ e.text[:5000] }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">{{ f.reason or "Nenhum evento extraído." }}</td></tr>{% endfor %}
+</table>
+{% endblock %}

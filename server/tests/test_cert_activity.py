@@ -53,7 +53,7 @@ def test_recycle_bin_is_high():
 
 def test_key_migration_event_is_high():
     found = analyze_activity(act(type="evento_windows", source="Security", event_id=5059,
-                                 detail="Key migration operation"))
+                                 detail="Key migration operation. Operation: Export of persistent cryptographic key."))
     assert "cert_chave_exportada_evento" in ids(found)
 
 

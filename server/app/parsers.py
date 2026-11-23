@@ -130,13 +130,14 @@ def _parse_vscdb(path: Path, source: str) -> list[Event]:
 
 
 def _parse_text(path: Path, source: str) -> list[Event]:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding=_detect_encoding(path) or "utf-8", errors="replace")
     return [Event(source, text, location=path.name)] if text.strip() else []
 
 
 def _parse_remote(path: Path, source: str) -> list[Event]:
     events = []
-    with path.open(encoding="utf-8", errors="replace") as fh:
+    encoding = _detect_encoding(path) or "utf-8"
+    with path.open(encoding=encoding, errors="replace") as fh:
         for n, line in enumerate(fh, 1):
             line = line.strip()
             if not line:
@@ -148,13 +149,55 @@ def _parse_remote(path: Path, source: str) -> list[Event]:
     return events
 
 
-def _is_text(path: Path) -> bool:
+def _detect_encoding(path: Path) -> str | None:
+    """utf-8 (with or without BOM) or utf-16 (TeamViewer writes some logs this way); None if binary."""
     with path.open("rb") as fh:
-        return b"\x00" not in fh.read(4096)
+        head = fh.read(4096)
+    if head.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return "utf-16"
+    if b"\x00" not in head:
+        return "utf-8"
+    # UTF-16LE without BOM: zeros in the odd positions of ASCII text.
+    odd = head[1::2]
+    if odd and odd.count(0) / len(odd) > 0.6 and head[0::2].count(0) / max(1, len(head[0::2])) < 0.2:
+        return "utf-16-le"
+    return None
+
+
+def _is_text(path: Path) -> bool:
+    return _detect_encoding(path) is not None
+
+
+TEXT_SUFFIXES = {".txt", ".log", ".md", ".env", ".toml", ".yaml", ".yml", ".ini",
+                 ".cfg", ".conf", ".gitconfig", ".npmrc", ""}
+MAX_REMOTE_BYTES = 1024 * 1024 * 1024  # remote-access logs are streamed line by line
+
+
+def _supported(path: Path, category: str) -> bool:
+    name, suffix = path.name.lower(), path.suffix.lower()
+    return (category == "acesso_remoto" or suffix in {".vscdb", ".jsonl", ".json"} | TEXT_SUFFIXES
+            or name.startswith(".env") or name.endswith("history"))
+
+
+def skip_reason(path: Path, category: str) -> str:
+    """Why a copied file produced no events (shown in the collection's file browser)."""
+    if not path.is_file():
+        return "não encontrado no pacote"
+    limit = MAX_REMOTE_BYTES if category == "acesso_remoto" else MAX_TEXT_BYTES
+    if path.stat().st_size > limit:
+        return "acima do limite de leitura"
+    if path.suffix.lower() != ".vscdb" and _detect_encoding(path) is None:
+        return "binário"
+    if not _supported(path, category):
+        return "formato não suportado"
+    return "sem conteúdo relevante"
 
 
 def parse_file(path: Path, category: str) -> list[Event]:
-    if not path.is_file() or path.stat().st_size > MAX_TEXT_BYTES:
+    limit = MAX_REMOTE_BYTES if category == "acesso_remoto" else MAX_TEXT_BYTES
+    if not path.is_file() or path.stat().st_size > limit:
         return []
     source = _source_for(path)
     name = path.name.lower()
@@ -169,8 +212,6 @@ def parse_file(path: Path, category: str) -> list[Event]:
         return _parse_jsonl(path, source)
     if suffix == ".json":
         return _parse_json(path, source)
-    if suffix in {".txt", ".log", ".md", ".env", ".toml", ".yaml", ".yml", ".ini",
-                  ".cfg", ".conf", ".gitconfig", ".npmrc", ""} or name.startswith(".env") \
-            or name.endswith("history"):
+    if suffix in TEXT_SUFFIXES or name.startswith(".env") or name.endswith("history"):
         return _parse_text(path, source)
     return []

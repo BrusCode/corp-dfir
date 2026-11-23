@@ -6,10 +6,10 @@
 {% include "_runs_table.html" %}
 <h3>Passos</h3>
 <table>
-  <tr><th>Quando (UTC)</th><th>Passo</th><th>Status</th><th>%</th><th>Detalhe</th></tr>
+  <tr><th>Quando</th><th>Passo</th><th>Status</th><th>%</th><th>Detalhe</th></tr>
   {% for h in history %}
   <tr class="{{ 'sev-alta' if h.status == 'erro' else '' }}">
-    <td>{{ h.at[:19] }}</td><td>{{ h.step }}</td><td>{{ h.status }}</td><td>{{ h.percent }}</td>
+    <td>{{ h.at | br }}</td><td>{{ h.step }}</td><td>{{ h.status }}</td><td>{{ h.percent }}</td>
     <td class="snip">{{ h.detail }}</td>
   </tr>
   {% endfor %}

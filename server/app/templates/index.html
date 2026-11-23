@@ -11,9 +11,9 @@
   {% for c in collections_view %}
   {% set st = c.stats_data %}
   <tr>
-    <td>{{ c.id }}</td>
-    <td><a href="/findings?host={{ c.host }}">{{ c.host }}</a><div class="muted">{{ c.filename }}</div></td>
-    <td>{{ c.received_at[:19] }}</td>
+    <td><a href="/collections/{{ c.id }}">#{{ c.id }}</a></td>
+    <td><a href="/collections/{{ c.id }}">{{ c.host }}</a><div class="muted">{{ c.filename }}</div><div><a href="/findings?host={{ c.host }}">achados</a> · <a href="/collections/{{ c.id }}">arquivos</a></div></td>
+    <td>{{ c.received_at | br }}</td>
     <td>{{ c.status }}{% if c.error %}<div class="muted">{{ c.error }}</div>{% endif %}</td>
     <td>{{ c.events }}</td>
     <td>{{ c.findings }}</td>

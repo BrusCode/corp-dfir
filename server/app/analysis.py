@@ -10,7 +10,7 @@ from collections import Counter
 
 import httpx
 
-from app import config, db, llm
+from app import config, db, llm, reportdata
 from app.config import Settings
 from app.rules import load_rules, mask_secrets
 
@@ -42,9 +42,9 @@ def _section(title: str, lines: list[str], limit: int) -> str:
 def build_digest(settings: Settings, host: str = "") -> tuple[str, dict]:
     host = host or None
     rules = load_rules()
-    findings = db.list_findings(settings, host=host, limit=20_000)
-    certs = db.list_certificates(settings, host)
-    activity = db.list_cert_activity(settings, host)
+    findings = reportdata.dedupe_findings(db.list_findings(settings, host=host, limit=50_000))
+    certs = reportdata.dedupe_certs(db.list_certificates(settings, host))
+    activity, omitted = reportdata.focus_timeline(db.list_cert_activity(settings, host, limit=20_000))
     remote = db.remote_events(settings, host)
     collections = [c for c in db.list_collections(settings) if not host or c["host"] == host]
     secrets = [s for s in db.correlated_secrets(settings)
@@ -68,7 +68,8 @@ def build_digest(settings: Settings, host: str = "") -> tuple[str, dict]:
             f"- {c['host']} | {c['verdict']} | {c['subject'] or '(ilegível)'} {c['cnpj'] or ''} | "
             f"{'com chave' if c['has_private_key'] else 'sem chave'} | {(c['file_created'] or '')[:10]} | "
             f"{c['host_url'] or '-'} | {c['path'] or c['origin']}" for c in certs], 120),
-        _section("Linha do tempo de atividade com certificados", [
+        "Eventos de rotina omitidos da linha do tempo: " + (", ".join(f"{k}={v}" for k, v in omitted.most_common()) or "nenhum"),
+        _section("Linha do tempo de atividade com certificados (horários UTC)", [
             f"- {(a['ts'] or '')[:16]} | {a['host']} | {a['role']} | {a['rule_ids'] or ''} | {a['text'][:220]}"
             for a in activity], 120),
         _section("Acessos remotos (linhas de log)", [

@@ -8,7 +8,7 @@ from pathlib import Path
 from app import config, db, llm
 from app.certs import analyze_activity, analyze_cert, describe, describe_activity
 from app.config import Settings
-from app.parsers import parse_file
+from app.parsers import parse_file, skip_reason
 from app.rules import load_rules, mask_secrets, scan_text
 
 
@@ -56,9 +56,14 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                 stats["files"] += 1
                 if not path.is_file():
                     stats["missing_in_bundle"] += 1
+                    db.set_file_note(con, collection_id, entry.get("original_path"), "não encontrado no pacote")
                     continue
                 bump("files_by_category", entry.get("category") or "?")
-                for event in parse_file(path, entry.get("category", "")):
+                parsed = parse_file(path, entry.get("category", ""))
+                if not parsed:
+                    db.set_file_note(con, collection_id, entry.get("original_path"),
+                                     skip_reason(path, entry.get("category", "")))
+                for event in parsed:
                     ctx = {"host": host, "profile": entry.get("profile"),
                            "source": event.source, "ts": event.ts or entry.get("mtime"),
                            "original_path": entry.get("original_path")}

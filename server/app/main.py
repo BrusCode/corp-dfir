@@ -17,8 +17,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 from fastapi.templating import Jinja2Templates
 
-from app import analysis, config, db, llm, scripts
+from app import analysis, config, db, llm, reportdata, scripts
 from app.config import get_settings
+from app.timefmt import br_datetime
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Corp-DFIR", docs_url=None, redoc_url=None, lifespan=lifespan)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+templates.env.filters["br"] = br_datetime  # horários exibidos em Brasília (UTC-3)
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 CHUNK = 1024 * 1024
 
@@ -183,6 +185,45 @@ def run_detail(request: Request, run_id: str):
                                       {"run": run, "history": db.run_history(settings, run_id)})
 
 
+@app.get("/collections/{collection_id}", response_class=HTMLResponse)
+def collection_page(request: Request, collection_id: int, category: str = "", q: str = "", status: str = ""):
+    settings = get_settings()
+    collection = db.get_collection(settings, collection_id)
+    if collection is None:
+        raise HTTPException(404, "coleta não encontrada")
+    all_files = db.list_collection_files(settings, collection_id)
+    counts: dict[str, dict] = {}
+    for f in all_files:
+        c = counts.setdefault(f["category"] or "?", {"files": 0, "events": 0, "findings": 0, "copied": 0})
+        c["files"] += 1
+        c["events"] += f["events"]
+        c["findings"] += f["findings"]
+        c["copied"] += 1 if f["status"] == "copied" else 0
+    try:
+        stats = json.loads(collection.get("stats") or "{}")
+    except ValueError:
+        stats = {}
+    return templates.TemplateResponse(request, "collection.html", {
+        "c": collection, "stats": stats, "counts": counts,
+        "files": db.list_collection_files(settings, collection_id, category or None, q or None, status or None),
+        "statuses": sorted({f["status"] for f in all_files if f["status"]}),
+        "category": category, "q": q, "status": status,
+    })
+
+
+@app.get("/collections/{collection_id}/file", response_class=HTMLResponse)
+def collection_file_page(request: Request, collection_id: int, path: str):
+    settings = get_settings()
+    meta = db.collection_file(settings, collection_id, path)
+    if meta is None:
+        raise HTTPException(404, "arquivo não encontrado nesta coleta")
+    return templates.TemplateResponse(request, "collection_file.html", {
+        "cid": collection_id, "f": meta,
+        "events": db.file_events(settings, collection_id, path),
+        "findings": db.file_findings(settings, collection_id, path),
+    })
+
+
 @app.post("/collections/{collection_id}/reprocess")
 def reprocess(request: Request, collection_id: int):
     """Re-run the current rules on a stored bundle (the evidence file is not changed)."""
@@ -332,8 +373,9 @@ SEVERITY_ORDER = {"alta": 0, "media": 1, "baixa": 2}
 def _report_context(host: str, download: bool) -> dict:
     settings = get_settings()
     scope = host or None
-    findings = db.list_findings(settings, host=scope, limit=20_000)
-    certs = db.list_certificates(settings, scope)
+    findings = reportdata.dedupe_findings(db.list_findings(settings, host=scope, limit=50_000))
+    certs = reportdata.dedupe_certs(db.list_certificates(settings, scope))
+    timeline, omitted = reportdata.focus_timeline(db.list_cert_activity(settings, scope, limit=20_000))
     collections = [c for c in db.list_collections(settings) if not host or c["host"] == host]
     for c in collections:
         try:
@@ -352,7 +394,7 @@ def _report_context(host: str, download: bool) -> dict:
         "host": host,
         "hosts": db.list_hosts(settings),
         "download": download,
-        "generated_at": datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        "generated_at": br_datetime(datetime.now(timezone.utc).isoformat(), seconds=False) + " (Brasília)",
         "kpis": {
             "coletas": len(collections),
             "maquinas": len({c["host"] for c in collections}),
@@ -366,7 +408,9 @@ def _report_context(host: str, download: bool) -> dict:
         "by_rule": sorted(by_rule.items(), key=lambda kv: -kv[1]),
         "certs": sorted(certs, key=lambda c: (c["host"], 0 if "terceiro" in (c["verdict"] or "") else 1, c["path"] or "")),
         "findings": sorted(findings, key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["host"]))[:500],
-        "activity": db.list_cert_activity(settings, scope, limit=1000),
+        "activity": timeline[:1500],
+        "activity_total": len(timeline),
+        "activity_omitted": sorted(omitted.items(), key=lambda kv: -kv[1]),
         "remote": db.remote_events(settings, scope)[:500],
         "secrets": [s for s in db.correlated_secrets(settings)
                     if not host or host in (s.get("host_list") or "").split(",")],

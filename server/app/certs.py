@@ -87,6 +87,11 @@ def analyze_cert(record: dict, own_cnpjs: set[str]) -> list[Finding]:
 EXPORT_CMD = re.compile(r"(?i)export-pfxcertificate|certutil[^\n]*-exportpfx|\.export\(|pfx[^\n]*export")
 IMPORT_CMD = re.compile(r"(?i)import-pfxcertificate|certutil[^\n]*-importpfx|import-certificate|certutil[^\n]*-addstore")
 LIFECYCLE_LOG = re.compile(r"(?i)certificateservicesclient-lifecycle")
+LIFE_EXPORTED = re.compile(r"(?i)foi exportad|has been exported|was exported")
+LIFE_EXPIRING = re.compile(r"(?i)prestes a expirar|about to expire|expirou|has expired")
+LIFE_REMOVED = re.compile(r"(?i)foi (removid|exclu[íi]d)|has been (deleted|removed)")
+KEY_EXPORT = re.compile(r"(?i)exporta[çc][ãa]o de chave|export of persistent")
+KEY_IMPORT = re.compile(r"(?i)importa[çc][ãa]o de chave|import of persistent")
 KEY_MIGRATION_EVENTS = {5059}
 KEY_FILE_EVENTS = {5058, 5061}
 
@@ -118,8 +123,19 @@ def analyze_activity(record: dict) -> list[Finding]:
     if kind == "evento_windows":
         event_id = record.get("event_id")
         if event_id in KEY_MIGRATION_EVENTS:
-            return [_activity_finding("cert_chave_exportada_evento", "alta", record)]
+            # 5059 says in its body whether the persistent key was exported or imported.
+            if KEY_EXPORT.search(detail):
+                return [_activity_finding("cert_chave_exportada_evento", "alta", record)]
+            if KEY_IMPORT.search(detail):
+                return [_activity_finding("cert_chave_importada_evento", "media", record)]
+            return [_activity_finding("cert_chave_migracao_evento", "baixa", record)]
         if LIFECYCLE_LOG.search(str(record.get("source") or "")):
+            if LIFE_EXPORTED.search(detail):
+                return [_activity_finding("cert_exportado_evento", "alta", record)]
+            if LIFE_EXPIRING.search(detail):
+                return [_activity_finding("cert_expirando", "baixa", record)]
+            if LIFE_REMOVED.search(detail):
+                return [_activity_finding("cert_removido_evento", "media", record)]
             return [_activity_finding("cert_instalado_evento", "media", record)]
         if event_id in KEY_FILE_EVENTS:
             return [_activity_finding("cert_chave_acessada_evento", "baixa", record)]

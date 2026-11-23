@@ -21,7 +21,7 @@
     <td>{{ r.rule_id }}{% if r.fingerprint %}<div class="muted">fp {{ r.fingerprint }}</div>{% endif %}</td>
     <td>{{ r.host }}<div class="muted">{{ r.profile }}</div></td>
     <td>{{ r.source }}</td>
-    <td>{{ (r.ts or "")[:19] }}</td>
+    <td>{{ r.ts | br }}</td>
     <td class="snip">{{ r.snippet }}</td>
     <td>{{ r.triage_label or "" }}<div class="muted">{{ r.triage_reason or "" }}</div></td>
     <td class="snip muted">{{ r.original_path }}</td>
