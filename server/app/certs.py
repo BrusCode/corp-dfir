@@ -62,3 +62,57 @@ def analyze_cert(record: dict, own_cnpjs: set[str]) -> list[Finding]:
         origin_text = f"baixado de {record.get('host_url') or '?'} (referência {record.get('referrer_url') or '?'}) | {text}"
         findings.append(_finding("cert_baixado", "alta", origin_text, thumb))
     return findings
+
+
+# --- Certificate activity (when/how certificates were used, moved or deleted) -----------
+EXPORT_CMD = re.compile(r"(?i)export-pfxcertificate|certutil[^\n]*-exportpfx|\.export\(|pfx[^\n]*export")
+IMPORT_CMD = re.compile(r"(?i)import-pfxcertificate|certutil[^\n]*-importpfx|import-certificate|certutil[^\n]*-addstore")
+LIFECYCLE_LOG = re.compile(r"(?i)certificateservicesclient-lifecycle")
+KEY_MIGRATION_EVENTS = {5059}
+KEY_FILE_EVENTS = {5058, 5061}
+
+
+def _activity_finding(rule_id: str, severity: str, record: dict) -> Finding:
+    snippet = " | ".join(str(x) for x in (
+        record.get("type"), record.get("source"), record.get("file_name") or record.get("path"),
+        record.get("detail")) if x)
+    return Finding(rule_id=rule_id, category="certificado", severity=severity,
+                   score=SEVERITY_SCORE[severity], snippet=snippet[:600],
+                   masked=None, fingerprint=None)
+
+
+def analyze_activity(record: dict) -> list[Finding]:
+    kind = record.get("type")
+    detail = str(record.get("detail") or "")
+    if kind == "lnk_aberto":
+        return [_activity_finding("cert_arquivo_aberto", "media", record)]
+    if kind == "historico_comando":
+        if EXPORT_CMD.search(detail):
+            return [_activity_finding("cert_exportado", "alta", record)]
+        if IMPORT_CMD.search(detail):
+            return [_activity_finding("cert_importado", "media", record)]
+        return [_activity_finding("cert_comando", "baixa", record)]
+    if kind == "acesso_remoto_arquivo":
+        return [_activity_finding("cert_transferido_remoto", "alta", record)]
+    if kind == "cert_na_lixeira":
+        return [_activity_finding("cert_apagado", "alta", record)]
+    if kind == "evento_windows":
+        event_id = record.get("event_id")
+        if event_id in KEY_MIGRATION_EVENTS:
+            return [_activity_finding("cert_chave_exportada_evento", "alta", record)]
+        if LIFECYCLE_LOG.search(str(record.get("source") or "")):
+            return [_activity_finding("cert_instalado_evento", "media", record)]
+        if event_id in KEY_FILE_EVENTS:
+            return [_activity_finding("cert_chave_acessada_evento", "baixa", record)]
+        return [_activity_finding("cert_evento", "baixa", record)]
+    if kind == "execucao_ferramenta":
+        return [_activity_finding("cert_ferramenta_executada", "baixa", record)]
+    if kind == "chave_privada_criada":
+        return [_activity_finding("cert_chave_privada_criada", "baixa", record)]
+    return []
+
+
+def describe_activity(record: dict) -> str:
+    return " | ".join(str(x) for x in (
+        record.get("type"), record.get("source"), record.get("file_name"), record.get("path"),
+        record.get("detail")) if x)[:4000]

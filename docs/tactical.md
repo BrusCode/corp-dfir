@@ -35,3 +35,34 @@ OK host=JHONS-SUPWP arquivos=812 copiados=790 certificados=6 MB=143.2 enviados=1
 ## Validação pendente
 
 A sintaxe do script não pôde ser validada em PowerShell durante o desenvolvimento. Antes do piloto, rode o `-DryRun` numa máquina de teste Windows 10/11 (PowerShell 5.1) e confira a saída.
+
+## Script de certificados (`collector/Invoke-DfirCertCollect.ps1`)
+
+Coleta focada em certificados digitais:
+
+- quais estão instalados (repositórios do Windows) e quando foram importados;
+- quais estão salvos em arquivo (`.pfx/.p12` em todo o perfil e na raiz dos discos; `.cer/.crt/.pem/.key` em Desktop, Documentos e Downloads), com a origem do download;
+- quando foram abertos (atalhos de "Recentes");
+- comandos de exportação e importação no histórico do PowerShell;
+- linhas dos logs do AnyDesk, TeamViewer e RustDesk que citam arquivos de certificado (transferência);
+- certificados apagados na lixeira, com a data em que foram apagados;
+- eventos do Windows ligados a certificados e chaves;
+- execução de `certutil`, `certmgr` e `mmc`;
+- data de chegada das chaves privadas.
+
+Só vão metadados e hashes; chaves privadas e `.pfx` nunca são copiados. No painel, tudo aparece em **Certificados**, inclusive a linha do tempo de atividade.
+
+Cadastre como um segundo script (`CorpDFIR - Certificados`), com os mesmos argumentos do coletor principal. Também roda como SYSTEM; o timeout de 1800 s é suficiente.
+
+## Diagnóstico: "rodou mas nada chegou no painel"
+
+1. **Teste de conexão primeiro.** Rode o script com `-TestConnection` adicionado aos argumentos.
+   - `conexao ... status=ok`: o servidor foi alcançado e o token é válido.
+   - `HTTP 401`: token errado.
+   - `Unable to connect`, tempo esgotado ou recusado: IP ou **porta** errados, ou firewall. Confira a porta no servidor com `grep DFIR_PORT ~/corp-dfir/deploy/.env`; ela pode não ser 8443.
+   - Erro de confiança/SSL: o `-CertThumbprint` não confere. Copie de novo o valor impresso pelo `install.sh`.
+2. **Log na máquina:**
+   - `C:\ProgramData\CorpDFIR\cert-collect.log`: uma linha por passo, com o ID da execução;
+   - `C:\ProgramData\CorpDFIR\collect.log`: transcrição completa do coletor principal.
+3. **Pacotes pendentes:** arquivos `CorpDFIR-*.zip` em `C:\ProgramData\CorpDFIR\` foram coletados, mas não enviados. São reenviados na próxima execução.
+4. **No servidor:** `cd ~/corp-dfir/deploy && docker compose logs --tail 100 api caddy`.

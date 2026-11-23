@@ -235,3 +235,17 @@ def findings_for_triage(settings, min_score: int) -> list[dict]:
         return [dict(r) for r in con.execute(
             "SELECT * FROM findings WHERE score >= ? AND (triage_label IS NULL OR triage_label='erro')"
             " ORDER BY id", (min_score,))]
+
+
+def list_cert_activity(settings, host=None, limit=5000) -> list[dict]:
+    query = ("SELECT e.*, (SELECT GROUP_CONCAT(f.rule_id) FROM findings f WHERE f.event_id=e.id)"
+             " AS rule_ids, (SELECT MAX(f.score) FROM findings f WHERE f.event_id=e.id) AS score"
+             " FROM events e WHERE e.category='certificado_atividade'")
+    params: list = []
+    if host:
+        query += " AND e.host=?"
+        params.append(host)
+    query += " ORDER BY e.ts, e.id LIMIT ?"
+    params.append(limit)
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(query, params)]

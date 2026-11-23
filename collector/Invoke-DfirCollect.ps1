@@ -11,6 +11,8 @@
   HTTPS port of the server (default 8443).
 .PARAMETER CertThumbprint
   SHA-1 thumbprint of the server certificate (printed by install.sh). Recommended.
+.PARAMETER TestConnection
+  Only checks that the server is reachable and the token is valid.
 .PARAMETER DryRun
   Lists what would be collected, without copying or sending.
 
@@ -24,6 +26,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Token,
     [int]$Port = 8443,
     [string]$CertThumbprint = "",
+    [switch]$TestConnection,
     [switch]$DryRun
 )
 
@@ -37,6 +40,32 @@ $MaxBundleBytes = 2GB
 $PauseMs = 150
 $HashOnlyExtensions = @(".pfx", ".p12", ".key", ".cer", ".crt", ".pem")
 $SkipProfiles = @("Public", "Default", "Default User", "All Users", "WDAGUtilityAccount")
+
+# --- Log local e teste de conexão ----------------------------------------------------------
+if (-not (Test-Path -LiteralPath $StagingRoot)) { New-Item -ItemType Directory -Path $StagingRoot -Force | Out-Null }
+# Registra toda a execução (inclusive erros) em C:\ProgramData\CorpDFIR\collect.log.
+try { Start-Transcript -LiteralPath (Join-Path $StagingRoot "collect.log") -Append -Force | Out-Null } catch { }
+"INICIO host={0} versao={1} servidor=https://{2}:{3}" -f $env:COMPUTERNAME, $CollectorVersion, $Server, $Port
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$pinEarly = ($CertThumbprint -replace "[^0-9A-Fa-f]", "").ToUpperInvariant()
+[Net.ServicePointManager]::ServerCertificateValidationCallback = {
+    param($sender, $cert, $chain, $errors)
+    if ($pinEarly) { return ($cert.GetCertHashString().ToUpperInvariant() -eq $pinEarly) }
+    return $true
+}.GetNewClosure()
+try {
+    $pingReq = [Net.HttpWebRequest]::Create("https://${Server}:$Port/api/v1/ping")
+    $pingReq.Headers.Add("X-DFIR-Token", $Token)
+    $pingReq.Timeout = 15000
+    $pingResp = $pingReq.GetResponse(); $pingResp.Dispose()
+    "CONEXAO ok (servidor alcançado e token válido)"
+} catch {
+    $r = $_.Exception.Response
+    if ($r) { "CONEXAO erro HTTP {0} (401 = token errado)" -f [int]$r.StatusCode }
+    else { "CONEXAO erro: {0}" -f $_.Exception.Message }
+    if ($TestConnection) { exit 3 }
+}
+if ($TestConnection) { exit 0 }
 
 # --- Baixo impacto -----------------------------------------------------------------------
 try { (Get-Process -Id $PID).PriorityClass = "Idle" } catch { }

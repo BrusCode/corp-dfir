@@ -81,3 +81,9 @@ def test_dashboard_and_exports(client, settings, tmp_path):
     assert client.get("/remote").status_code == 200
     assert client.get("/certs").status_code == 200
     assert client.get("/healthz").json() == {"ok": True}
+
+
+def test_ping_validates_token(client):
+    assert client.get("/api/v1/ping", headers={"X-DFIR-Token": "test-token"}).json() == {"ok": True}
+    assert client.get("/api/v1/ping", headers={"X-DFIR-Token": "errado"}).status_code == 401
+    assert client.get("/api/v1/ping").status_code == 401

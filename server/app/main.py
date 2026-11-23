@@ -130,6 +130,15 @@ def upload(
     return {"collection_id": cid, "host": host}
 
 
+@app.get("/api/v1/ping")
+def ping(x_dfir_token: str = Header(default="")):
+    """Lets a collector check reachability and its token before collecting."""
+    settings = get_settings()
+    if not settings.upload_token or not hmac.compare_digest(x_dfir_token, settings.upload_token):
+        raise HTTPException(401, "token inválido")
+    return {"ok": True}
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -169,8 +178,11 @@ def remote(request: Request, host: str = ""):
 
 @app.get("/certs", response_class=HTMLResponse)
 def certs(request: Request, host: str = ""):
-    return templates.TemplateResponse(request, "certs.html",
-                                      {"rows": db.list_certificates(get_settings(), host), "host": host})
+    settings = get_settings()
+    return templates.TemplateResponse(request, "certs.html", {
+        "rows": db.list_certificates(settings, host), "host": host,
+        "activity": db.list_cert_activity(settings, host),
+    })
 
 
 @app.get("/export/findings.csv")

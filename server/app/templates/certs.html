@@ -20,4 +20,21 @@
   <tr><td colspan="8" class="muted">Nenhum certificado sinalizado.</td></tr>
   {% endfor %}
 </table>
+<h2>Atividade com certificados (linha do tempo)</h2>
+<p class="muted">Quando e como certificados foram abertos, importados, exportados, transferidos por acesso remoto ou apagados. Horários em UTC, como registrados na máquina.</p>
+<table>
+  <tr><th>Quando</th><th>Host / perfil</th><th>Tipo</th><th>Achado</th><th>Detalhe</th><th>Origem</th></tr>
+  {% for a in activity %}
+  <tr>
+    <td>{{ (a.ts or "")[:19] }}</td>
+    <td>{{ a.host }}<div class="muted">{{ a.profile or "" }}</div></td>
+    <td>{{ a.role }}</td>
+    <td class="{% if (a.score or 0) >= 5 %}sev-alta{% elif (a.score or 0) >= 3 %}sev-media{% endif %}">{{ a.rule_ids or "" }}</td>
+    <td class="snip">{{ a.text }}</td>
+    <td class="snip muted">{{ a.original_path or "" }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">Nenhuma atividade registrada.</td></tr>
+  {% endfor %}
+</table>
 {% endblock %}

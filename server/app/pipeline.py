@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 from app import config, db, llm
-from app.certs import analyze_cert, describe
+from app.certs import analyze_activity, analyze_cert, describe, describe_activity
 from app.config import Settings
 from app.parsers import parse_file
 from app.rules import load_rules, mask_secrets, scan_text
@@ -77,6 +77,24 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                                                text=describe(record), **ctx)
                     stats["events"] += 1
                     for f in found:
+                        db.insert_finding(con, collection_id, event_id, f, **ctx)
+                        stats["findings"] += 1
+        activity_file = work / "cert_activity.json"
+        if activity_file.exists():
+            records = json.loads(activity_file.read_text(encoding="utf-8-sig") or "[]")
+            if isinstance(records, dict):
+                records = [records]
+            with db.connect(settings) as con:
+                for record in records:
+                    ctx = {"host": host, "profile": record.get("profile"),
+                           "source": str(record.get("source") or "certificado")[:100],
+                           "ts": record.get("ts"),
+                           "original_path": record.get("path") or record.get("source")}
+                    event_id = db.insert_event(con, collection_id, category="certificado_atividade",
+                                               role=record.get("type"), location=record.get("source"),
+                                               text=mask_secrets(describe_activity(record), rules), **ctx)
+                    stats["events"] += 1
+                    for f in analyze_activity(record):
                         db.insert_finding(con, collection_id, event_id, f, **ctx)
                         stats["findings"] += 1
         if llm.enabled(settings):
