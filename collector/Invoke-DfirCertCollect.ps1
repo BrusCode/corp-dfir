@@ -28,7 +28,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$CollectorVersion = "cert-1.3.0"
+$CollectorVersion = "cert-1.4.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Mesma exceção do Bitdefender do coletor principal.
 $PauseMs = 50
 $CertExtensions = @(".pfx", ".p12", ".cer", ".crt", ".pem", ".key")
@@ -373,6 +373,19 @@ try {
                 @("AppData\Roaming\TeamViewer", "*.log", "teamviewer"), @("AppData\Roaming\TeamViewer", "*.txt", "teamviewer"),
                 @("AppData\Roaming\RustDesk\log", "*", "rustdesk"))) {
             foreach ($f in (Get-FilesSafe (Join-Path $p.FullName $spec[0]) $spec[1] 3)) { $remoteLogs.Add(@($f, $spec[2], $p.Name)) }
+        }
+    }
+    # Agente WebPosto (RustDesk Pro): logs in the user profile, the service profile and the install folder.
+    foreach ($p in $profiles) {
+        foreach ($dir in (Get-Item -Path (Join-Path $p.FullName "AppData\Roaming\webPosto*") -Force -ErrorAction SilentlyContinue)) {
+            foreach ($f in (Get-FilesSafe $dir.FullName "*.log" 6)) { $remoteLogs.Add(@($f, "webposto-agente", $p.Name)) }
+        }
+    }
+    foreach ($glob in @("C:\Program Files\webPosto*", "C:\Program Files (x86)\webPosto*", "C:\ProgramData\webPosto*",
+            "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\webPosto*",
+            "C:\Windows\System32\config\systemprofile\AppData\Roaming\webPosto*")) {
+        foreach ($dir in (Get-Item -Path $glob -Force -ErrorAction SilentlyContinue)) {
+            foreach ($f in (Get-FilesSafe $dir.FullName "*.log" 6)) { $remoteLogs.Add(@($f, "webposto-agente", "_system")) }
         }
     }
     foreach ($spec in @(@("C:\ProgramData\AnyDesk", "*.trace", "anydesk"), @("C:\Program Files\TeamViewer", "*.log", "teamviewer"),

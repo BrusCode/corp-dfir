@@ -9,7 +9,8 @@ from app import config, db, llm
 from app.certs import analyze_activity, analyze_cert, describe, describe_activity
 from app.config import Settings
 from app.parsers import parse_file, skip_reason
-from app.rules import load_rules, mask_secrets, scan_text
+from app.remote import classify_remote_line, tool_label
+from app.rules import SEVERITY_SCORE, Finding, load_rules, mask_secrets, scan_text
 
 
 def _safe_extract(zpath: Path, dest: Path) -> None:
@@ -68,6 +69,14 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                            "source": event.source, "ts": event.ts or entry.get("mtime"),
                            "original_path": entry.get("original_path")}
                     findings = scan_text(event.text, rules)
+                    if entry.get("category") == "acesso_remoto":
+                        # Log lines name the tool by definition: keep only secrets, plus a
+                        # session/transfer finding when the line is one.
+                        findings = [f for f in findings if f.rule_id != "acesso_remoto_tool"]
+                        kind = classify_remote_line(event.source, event.text)
+                        if kind:
+                            findings.append(Finding(kind[0], "acesso_remoto", kind[1], SEVERITY_SCORE[kind[1]],
+                                                    f"{tool_label(event.source)} | {mask_secrets(event.text, rules)[:400]}"))
                     # Events are stored with secrets masked; the raw value stays in the evidence.
                     stored_text = mask_secrets(event.text, rules)
                     event_id = db.insert_event(

@@ -150,7 +150,7 @@
 <h2>Acessos remotos</h2>
 <table>
   <tr><th>Máquina</th><th>Ferramenta</th><th>Registro</th></tr>
-  {% for r in remote %}<tr><td>{{ r.host }}</td><td>{{ r.source }}</td><td class="mono">{{ r.text[:300] }}</td></tr>
+  {% for r in remote %}<tr><td>{{ r.host }}</td><td>{{ r.source }}{% if r.source == 'webposto-agente' %} <strong>(nosso)</strong>{% endif %}</td><td class="mono">{{ r.text[:300] }}</td></tr>
   {% else %}<tr><td colspan="3" class="muted">Nenhum registro de acesso remoto.</td></tr>{% endfor %}
 </table>
 

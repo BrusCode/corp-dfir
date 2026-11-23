@@ -12,9 +12,7 @@ MIN_STRING_LEN = 3
 VSCDB_KEY_HINTS = re.compile(
     r"(?i)chat|aichat|composer|copilot|cline|roo|continue|agent|conversation|prompt|history"
 )
-REMOTE_LINE = re.compile(
-    r"(?i)incoming|outgoing|connect|session|login|auth|accepted|peer|from \d{1,3}(?:\.\d{1,3}){3}"
-)
+from app.remote import is_relevant as remote_line_relevant
 
 
 @dataclass
@@ -67,6 +65,8 @@ def _ts(obj: dict) -> str | None:
 
 def _source_for(path: Path) -> str:
     p = str(path).lower()
+    if "webposto" in p:
+        return "webposto-agente"  # our RustDesk Pro based support agent
     for name in ("anydesk", "teamviewer", "rustdesk", "claude", "codex", "gemini",
                  "antigravity", "cursor", "windsurf", "continue", "aider", "openai",
                  "chatgpt", "code", "psreadline"):
@@ -144,7 +144,7 @@ def _parse_remote(path: Path, source: str) -> list[Event]:
                 continue
             # Connection files list one session per line; logs keep only connection lines.
             is_connection_file = path.name.lower().startswith("connection")
-            if is_connection_file or REMOTE_LINE.search(line):
+            if is_connection_file or remote_line_relevant(line):
                 events.append(Event(source, line, location=f"{path.name}:{n}"))
     return events
 

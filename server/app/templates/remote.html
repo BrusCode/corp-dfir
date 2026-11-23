@@ -5,7 +5,7 @@
 <table>
   <tr><th>Host</th><th>Ferramenta</th><th>Linha do log</th><th>Arquivo</th></tr>
   {% for r in rows %}
-  <tr><td>{{ r.host }}</td><td>{{ r.source }}</td><td class="snip">{{ r.text }}</td><td class="snip muted">{{ r.original_path }} {{ r.location }}</td></tr>
+  <tr><td>{{ r.host }}</td><td>{{ r.source }}{% if r.source == 'webposto-agente' %} <strong>(nosso)</strong>{% endif %}</td><td class="snip">{{ r.text }}</td><td class="snip muted">{{ r.original_path }} {{ r.location }}</td></tr>
   {% else %}
   <tr><td colspan="4" class="muted">Nenhum evento de acesso remoto.</td></tr>
   {% endfor %}

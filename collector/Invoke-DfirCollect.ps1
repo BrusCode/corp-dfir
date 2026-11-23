@@ -44,7 +44,7 @@ trap {
 }
 $ProgressPreference = "SilentlyContinue"
 
-$CollectorVersion = "1.4.0"
+$CollectorVersion = "1.5.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Única exceção do Bitdefender.
 $MaxFileBytes = 200MB
 $MaxBundleBytes = 2GB
@@ -152,7 +152,17 @@ $ProfileSources = @(
 )
 # Package-based apps (ChatGPT Desktop from the Store) have variable folder names.
 $ProfileGlobSources = @(
-    @{ Cat = "ia"; Glob = "AppData\Local\Packages\OpenAI.ChatGPT*"; Filter = "*.json*"; Depth = 8 }
+    @{ Cat = "ia"; Glob = "AppData\Local\Packages\OpenAI.ChatGPT*"; Filter = "*.json*"; Depth = 8 },
+    # Agente WebPosto (RustDesk Pro): only logs; config files hold the permanent password.
+    @{ Cat = "acesso_remoto"; Glob = "AppData\Roaming\webPosto*"; Filter = "*.log"; Depth = 6 }
+)
+# Agente WebPosto installed for the machine / running as a service.
+$SystemGlobSources = @(
+    @{ Cat = "acesso_remoto"; Glob = "C:\Program Files\webPosto*"; Filter = "*.log"; Depth = 6 },
+    @{ Cat = "acesso_remoto"; Glob = "C:\Program Files (x86)\webPosto*"; Filter = "*.log"; Depth = 6 },
+    @{ Cat = "acesso_remoto"; Glob = "C:\ProgramData\webPosto*"; Filter = "*.log"; Depth = 6 },
+    @{ Cat = "acesso_remoto"; Glob = "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\webPosto*"; Filter = "*.log"; Depth = 6 },
+    @{ Cat = "acesso_remoto"; Glob = "C:\Windows\System32\config\systemprofile\AppData\Roaming\webPosto*"; Filter = "*.log"; Depth = 6 }
 )
 # Loose secrets in work folders (OpenRouter keys and others).
 $LooseFolders = @("Desktop", "Documents", "Downloads")
@@ -370,6 +380,11 @@ foreach ($p in $profiles) {
 }
 foreach ($s in $SystemSources) {
     Add-Candidates (Get-FilesBounded $s.Path $s.Filter $s.Depth) "_system" $s.Cat
+}
+foreach ($g in $SystemGlobSources) {
+    foreach ($dir in (Get-Item -Path $g.Glob -Force -ErrorAction SilentlyContinue)) {
+        Add-Candidates (Get-FilesBounded $dir.FullName $g.Filter $g.Depth) "_system" $g.Cat
+    }
 }
 
 # -SemIA: drop AI agent conversation sources before copying anything.
