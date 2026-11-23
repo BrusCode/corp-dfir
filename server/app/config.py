@@ -19,6 +19,8 @@ class Settings:
     max_upload_bytes: int
     own_cnpjs: frozenset
     company_context: str = ""
+    scripts_dir: Path = Path("/collector")
+    server_cert: Path = Path("/certs/server.crt")
 
     @property
     def db_path(self) -> Path:
@@ -46,6 +48,8 @@ def get_settings() -> Settings:
         llm_min_score=int(os.environ.get("LLM_MIN_SCORE", "5")),
         max_upload_bytes=int(os.environ.get("DFIR_MAX_UPLOAD_BYTES", str(2_200 * 1024 * 1024))),
         own_cnpjs=parse_cnpjs(os.environ.get("DFIR_OWN_CNPJS", "")),
+        scripts_dir=Path(os.environ.get("DFIR_SCRIPTS_DIR", "/collector")),
+        server_cert=Path(os.environ.get("DFIR_SERVER_CERT", "/certs/server.crt")),
     )
 
 

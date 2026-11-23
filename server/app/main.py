@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 from fastapi.templating import Jinja2Templates
 
-from app import analysis, config, db, llm
+from app import analysis, config, db, llm, scripts
 from app.config import get_settings
 
 
@@ -398,3 +398,29 @@ def report_analyze(request: Request, host: str = Form("")):
     analysis_id = db.create_analysis(get_settings(), host)
     enqueue_analysis(analysis_id)
     return RedirectResponse(f"/report?host={host}", status_code=303)
+
+
+# --- Scripts do Tactical --------------------------------------------------------------------
+@app.get("/scripts", response_class=HTMLResponse)
+def scripts_page(request: Request):
+    settings = get_settings()
+    host_header = request.headers.get("host", "")
+    server, _, port = host_header.partition(":")
+    port = port or ("443" if request.url.scheme == "https" else "80")
+    thumb = scripts.server_thumbprint(settings.server_cert)
+    base_args = f"-Server {server} -Port {port} -Token {settings.upload_token}"
+    if thumb:
+        base_args += f" -CertThumbprint {thumb}"
+    return templates.TemplateResponse(request, "scripts.html", {
+        "scripts": scripts.list_scripts(settings.scripts_dir), "base_args": base_args,
+        "thumb": thumb, "scripts_dir": str(settings.scripts_dir),
+    })
+
+
+@app.get("/scripts/{name}/raw")
+def script_raw(name: str, download: int = 0):
+    path = scripts.get_script_path(get_settings().scripts_dir, name)
+    if path is None:
+        raise HTTPException(404, "script não encontrado")
+    headers = {"Content-Disposition": f'attachment; filename="{path.name}"'} if download else {}
+    return Response(path.read_text(encoding="utf-8-sig"), media_type="text/plain; charset=utf-8", headers=headers)

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Scripts para o Tactical RMM</h2>
+<p class="muted">Lidos da pasta <code>{{ scripts_dir }}</code> do repositório: após <code>git pull</code> e <code>./install.sh</code>, esta página já mostra a versão nova. No Tactical, cole o script em <em>Script Manager</em> (PowerShell) e a linha de argumentos em <em>Script Arguments</em>.{% if not thumb %} <strong class="sev-alta">Thumbprint do servidor não encontrado: os argumentos saem sem -CertThumbprint.</strong>{% endif %}</p>
+
+{% for s in scripts %}
+<div style="background:#fff;border:1px solid #e3e6ec;border-radius:6px;padding:14px 16px;margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+    <div><strong style="font-size:15px">{{ s.name }}</strong> <span class="tag" style="background:#eef2fb;border-radius:3px;padding:1px 6px">{{ s.version or "sem versão" }}</span></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="copyScript('{{ s.name }}', this)">Copiar script</button>
+      <a href="/scripts/{{ s.name }}/raw?download=1"><button type="button">Baixar .ps1</button></a>
+    </div>
+  </div>
+  <p style="margin:6px 0">{{ s.synopsis }}</p>
+  <div class="muted" style="font-size:12px">SHA-256 {{ s.sha256 }} · {{ (s.size / 1024) | round(1) }} KB · atualizado {{ s.modified }}</div>
+  <table style="margin-top:10px">
+    <tr><th style="width:30%">Uso</th><th>Script Arguments</th><th style="width:90px"></th></tr>
+    {% for label, extra in s.variants %}
+    {% set args = (base_args ~ " " ~ extra) | trim %}
+    <tr>
+      <td>{{ label }}</td>
+      <td class="snip"><code>{{ args }}</code></td>
+      <td><button onclick="copyText({{ args | tojson | forceescape }}, this)">Copiar</button></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<p class="muted">Nenhum script encontrado em {{ scripts_dir }}.</p>
+{% endfor %}
+
+<script>
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  const old = btn.textContent; btn.textContent = "Copiado!"; setTimeout(() => btn.textContent = old, 1500);
+}
+async function copyScript(name, btn) {
+  const resp = await fetch("/scripts/" + encodeURIComponent(name) + "/raw");
+  if (!resp.ok) { alert("Não foi possível ler o script"); return; }
+  await copyText(await resp.text(), btn);
+}
+</script>
+{% endblock %}

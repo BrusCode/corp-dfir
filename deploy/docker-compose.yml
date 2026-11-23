@@ -9,7 +9,10 @@ services:
   api:
     build: ../server
     env_file: .env
-    volumes: [./data:/data]
+    volumes:
+      - ./data:/data
+      - ../collector:/collector:ro          # aba Scripts
+      - ./certs/server.crt:/certs/server.crt:ro  # thumbprint nos argumentos
     depends_on: [redis]
     restart: unless-stopped
 
