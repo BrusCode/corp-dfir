@@ -68,11 +68,19 @@ def connect(settings: Settings):
         con.close()
 
 
+MIGRATIONS = ["ALTER TABLE collections ADD COLUMN stats TEXT"]
+
+
 def init_db(settings: Settings) -> None:
     for path in (settings.data_dir, settings.evidence_dir, settings.work_dir):
         path.mkdir(parents=True, exist_ok=True)
     with connect(settings) as con:
         con.executescript(SCHEMA)
+        for statement in MIGRATIONS:
+            try:
+                con.execute(statement)
+            except sqlite3.OperationalError:
+                pass  # already applied
 
 
 def create_collection(settings, *, host, filename, sha256, stored_path, custody) -> int:
@@ -86,10 +94,24 @@ def create_collection(settings, *, host, filename, sha256, stored_path, custody)
         return cur.lastrowid
 
 
-def set_status(settings, collection_id: int, status: str, error: str | None = None) -> None:
+def set_status(settings, collection_id: int, status: str, error: str | None = None,
+               stats: dict | None = None) -> None:
     with connect(settings) as con:
-        con.execute("UPDATE collections SET status=?, error=? WHERE id=?",
-                    (status, error, collection_id))
+        if stats is None:
+            con.execute("UPDATE collections SET status=?, error=? WHERE id=?",
+                        (status, error, collection_id))
+        else:
+            con.execute("UPDATE collections SET status=?, error=?, stats=? WHERE id=?",
+                        (status, error, json.dumps(stats), collection_id))
+
+
+def clear_collection_results(settings, collection_id: int) -> None:
+    """Remove everything derived from a bundle (the stored evidence itself is untouched)."""
+    with connect(settings) as con:
+        for table in ("findings", "events", "certificates", "files"):
+            con.execute(f"DELETE FROM {table} WHERE collection_id=?", (collection_id,))
+        con.execute("UPDATE collections SET status='queued', error=NULL, stats=NULL WHERE id=?",
+                    (collection_id,))
 
 
 def get_collection(settings, collection_id: int) -> dict | None:

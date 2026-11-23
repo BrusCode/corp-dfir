@@ -44,7 +44,7 @@ trap {
 }
 $ProgressPreference = "SilentlyContinue"
 
-$CollectorVersion = "1.3.0"
+$CollectorVersion = "1.4.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Única exceção do Bitdefender.
 $MaxFileBytes = 200MB
 $MaxBundleBytes = 2GB
@@ -398,6 +398,7 @@ New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 $manifest = New-Object System.Collections.Generic.List[string]    # JSON por arquivo
 $JsonSkipped = 0
 $copiedCount = 0
+$copiedByCat = @{}
 $total = 0L
 $fileIndex = 0
 foreach ($c in $unique) {
@@ -433,7 +434,10 @@ foreach ($c in $unique) {
     } catch {
         $entry.status = "error: " + $_.Exception.GetType().Name
     }
-    if ($entry.status -eq "copied") { $copiedCount++ }
+    if ($entry.status -eq "copied") {
+        $copiedCount++
+        $copiedByCat[$entry.category] = 1 + [int]$copiedByCat[$entry.category]
+    }
     Add-Record $manifest $entry
     Start-Sleep -Milliseconds $PauseMs
 }
@@ -442,7 +446,8 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 [string]$manifestJson = "[" + ($manifest -join ",") + "]"
 [IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), $manifestJson, $utf8)
 
-Send-Progress "copia" "ok" 75 ("copiados={0}" -f $copiedCount)
+$catSummary = ($copiedByCat.Keys | Sort-Object | ForEach-Object { "{0}={1}" -f $_, $copiedByCat[$_] }) -join " "
+Send-Progress "copia" "ok" 75 ("copiados={0} por tipo: {1}" -f $copiedCount, $(if ($catSummary) { $catSummary } else { "nenhum" }))
 $certRecords = New-Object System.Collections.Generic.List[string]  # JSON por certificado
 try { Get-CertInventory $profiles $certRecords } catch { }
 foreach ($c in $unique) {
@@ -467,9 +472,20 @@ $custody = [ordered]@{
 [IO.File]::WriteAllText((Join-Path $runDir "custody.json"), [string](ConvertTo-Json (New-Object PSObject -Property $custody) -Depth 3), $utf8)
 
 Send-Progress "certificados" "ok" 80 ("certificados={0}" -f $certRecords.Count)
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $bundlePath = Join-Path $StagingRoot $bundleName
-[IO.Compression.ZipFile]::CreateFromDirectory($runDir, $bundlePath, [IO.Compression.CompressionLevel]::Optimal, $false)
+# Entries are added one by one with "/" separators: some .NET versions write "\" with
+# CreateFromDirectory, and the server would not find the copied files.
+$zipArchive = [IO.Compression.ZipFile]::Open($bundlePath, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    $baseLen = (Resolve-Path -LiteralPath $runDir).ProviderPath.TrimEnd("\").Length + 1
+    foreach ($zf in (Get-ChildItem -LiteralPath $runDir -File -Recurse -Force)) {
+        $entryName = $zf.FullName.Substring($baseLen) -replace "\\", "/"
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $zf.FullName, $entryName,
+            [IO.Compression.CompressionLevel]::Optimal)
+    }
+} finally { $zipArchive.Dispose() }
 Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- Envio ---------------------------------------------------------------------------------

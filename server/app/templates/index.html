@@ -7,19 +7,29 @@
 {% endif %}
 <h2>Coletas recebidas</h2>
 <table>
-  <tr><th>#</th><th>Host</th><th>Recebido</th><th>Status</th><th>Eventos</th><th>Achados</th><th>SHA-256 do pacote</th></tr>
-  {% for c in collections %}
+  <tr><th>#</th><th>Host</th><th>Recebido</th><th>Status</th><th>Eventos</th><th>Achados</th><th>O que veio no pacote</th><th>SHA-256 do pacote</th><th></th></tr>
+  {% for c in collections_view %}
+  {% set st = c.stats_data %}
   <tr>
     <td>{{ c.id }}</td>
-    <td><a href="/findings?host={{ c.host }}">{{ c.host }}</a></td>
+    <td><a href="/findings?host={{ c.host }}">{{ c.host }}</a><div class="muted">{{ c.filename }}</div></td>
     <td>{{ c.received_at[:19] }}</td>
     <td>{{ c.status }}{% if c.error %}<div class="muted">{{ c.error }}</div>{% endif %}</td>
     <td>{{ c.events }}</td>
     <td>{{ c.findings }}</td>
+    <td class="muted" style="font-size:12px">
+      {% if st %}
+        {% for k, v in (st.get("files_by_category") or {}).items() %}{{ k }}: {{ v }} arq.{% if not loop.last %} · {% endif %}{% endfor %}
+        {% if st.get("events_by_category") %}<div>eventos: {% for k, v in st["events_by_category"].items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+        {% if st.get("skipped_by_status") %}<div>não copiados: {% for k, v in st["skipped_by_status"].items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+        {% if st.get("missing_in_bundle") %}<div class="sev-alta">{{ st["missing_in_bundle"] }} arquivo(s) do manifesto não encontrados no pacote</div>{% endif %}
+      {% else %}—{% endif %}
+    </td>
     <td class="snip">{{ c.sha256 }}</td>
+    <td><form method="post" action="/collections/{{ c.id }}/reprocess" onsubmit="return confirm('Reprocessar a coleta {{ c.id }} com as regras atuais? O pacote original não é alterado.')"><button>Reprocessar</button></form></td>
   </tr>
   {% else %}
-  <tr><td colspan="7" class="muted">Nenhuma coleta ainda.</td></tr>
+  <tr><td colspan="9" class="muted">Nenhuma coleta ainda.</td></tr>
   {% endfor %}
 </table>
 <h2>Segredos que aparecem em mais lugares</h2>

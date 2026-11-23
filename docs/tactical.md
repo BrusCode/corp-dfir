@@ -85,3 +85,25 @@ Desde a versão 1.1 (principal) e cert-1.1.0 (certificados), os dois scripts inf
 ## Coletor principal sem conversas de IA
 
 Adicione `-SemIA` aos argumentos do coletor principal (1.3.0+). Ele deixa de coletar conversas de agentes de IA e mantém os logs de acesso remoto, segredos soltos (`.env`, históricos de terminal) e o inventário de certificados.
+
+## Quarentena de certificados (`collector/Invoke-DfirCertQuarantine.ps1`)
+
+Remove certificados digitais **de terceiros** das máquinas, preservando-os como prova.
+
+| Modo | O que faz |
+|---|---|
+| `Relatorio` (padrão) | Só lista o que faria (`MOVERIA`, `MANTIDO`, `INSTALADO`). Não altera nada. **Rode este primeiro.** |
+| `-Modo Quarentena` | Move `.pfx/.p12/.key/.pem` (e `.cer/.crt` com `-IncluirPublicos`) das pastas Área de Trabalho, Documentos, Downloads e OneDrive, além das cópias na lixeira, para `C:\ProgramData\CorpDFIR\quarentena\<lote>\`. A pasta fica acessível só para SYSTEM e Administradores, com `manifesto.json` (caminho original, SHA-256, datas, origem do download). |
+| `-Modo Restaurar -Lote <lote>` | Devolve os arquivos do lote aos caminhos originais. |
+
+- **Mantidos:**
+  - CNPJs em `-ManterCnpj` (padrão `10353336000191`, Quality; vários separados por vírgula);
+  - nomes que casam com `-ManterNome` (padrão `quality|webposto`), tanto no titular do certificado quanto no nome do arquivo.
+- **AppData e pastas de programas não são tocados**, porque softwares podem usar certificados guardados ali. Eles aparecem como `IGNORADO`.
+- **Certificados instalados no Windows:**
+  - Só são removidos com `-Modo Quarentena -RemoverInstalados`. A chave privada não pode ser movida, só apagada, então antes da remoção o script salva a parte pública (`.cer`) e os dados.
+  - Como **SYSTEM**: trata o repositório da máquina e apenas lista os perfis com certificados instalados.
+  - Para os do **perfil do usuário**: cadastre uma cópia do script no Tactical com "Run as user" (o usuário precisa estar logado).
+- O progresso aparece em **Execuções** como `quarentena-relatorio` ou `quarentena-quarentena`, e o log local fica em `C:\ProgramData\CorpDFIR\quarentena.log`.
+- **Atenção a máquinas de desenvolvimento:** arquivos `.pem/.key` podem ser chaves de outros sistemas. Confira o modo `Relatorio` antes.
+- Remover os arquivos não desfaz a exposição. Os certificados que ficaram expostos (principalmente os com senha no nome) devem ser **revogados e reemitidos pelos clientes**.

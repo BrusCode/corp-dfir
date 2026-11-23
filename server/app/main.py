@@ -183,6 +183,18 @@ def run_detail(request: Request, run_id: str):
                                       {"run": run, "history": db.run_history(settings, run_id)})
 
 
+@app.post("/collections/{collection_id}/reprocess")
+def reprocess(request: Request, collection_id: int):
+    """Re-run the current rules on a stored bundle (the evidence file is not changed)."""
+    _require_same_origin(request)
+    settings = get_settings()
+    if db.get_collection(settings, collection_id) is None:
+        raise HTTPException(404, "coleta não encontrada")
+    db.clear_collection_results(settings, collection_id)
+    enqueue(collection_id)
+    return RedirectResponse("/", status_code=303)
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -191,7 +203,14 @@ def healthz():
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     settings = get_settings()
+    collections = db.list_collections(settings)
+    for c in collections:
+        try:
+            c["stats_data"] = json.loads(c.get("stats") or "{}")
+        except ValueError:
+            c["stats_data"] = {}
     return templates.TemplateResponse(request, "index.html", {
+        "collections_view": collections,
         "running": [r for r in db.list_runs(settings, 50) if r["state"] in ("em_andamento", "sem_sinal")],
         "collections": db.list_collections(settings),
         "secrets": db.correlated_secrets(settings)[:10],

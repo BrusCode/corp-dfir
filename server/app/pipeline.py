@@ -13,14 +13,20 @@ from app.rules import load_rules, mask_secrets, scan_text
 
 
 def _safe_extract(zpath: Path, dest: Path) -> None:
+    """Extract with "/" paths even when the zip was written with "\\" (some .NET versions do)."""
     dest.mkdir(parents=True, exist_ok=True)
     root = dest.resolve()
     with zipfile.ZipFile(zpath) as zf:
         for member in zf.infolist():
-            target = (dest / member.filename).resolve()
-            if not str(target).startswith(str(root)):
+            name = member.filename.replace("\\", "/")
+            if name.endswith("/"):
+                continue
+            target = (dest / name).resolve()
+            if not str(target).startswith(str(root) + "/"):
                 raise ValueError(f"caminho inválido no zip: {member.filename}")
-        zf.extractall(dest)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out)
 
 
 def process_bundle(settings: Settings, collection_id: int) -> dict:
@@ -29,7 +35,11 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
     host = collection["host"]
     work = settings.work_dir / str(collection_id)
     rules = load_rules()
-    stats = {"files": 0, "events": 0, "findings": 0, "triaged": 0}
+    stats = {"files": 0, "events": 0, "findings": 0, "triaged": 0, "missing_in_bundle": 0,
+             "files_by_category": {}, "skipped_by_status": {}, "events_by_category": {}}
+
+    def bump(key: str, sub: str, n: int = 1) -> None:
+        stats[key][sub] = stats[key].get(sub, 0) + n
     db.set_status(settings, collection_id, "processing")
     try:
         if work.exists():
@@ -40,9 +50,14 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
         with db.connect(settings) as con:
             for entry in manifest:
                 if entry.get("status") != "copied" or not entry.get("archive_path"):
+                    bump("skipped_by_status", str(entry.get("status") or "sem_status"))
                     continue
-                path = work / entry["archive_path"]
+                path = work / entry["archive_path"].replace("\\", "/")
                 stats["files"] += 1
+                if not path.is_file():
+                    stats["missing_in_bundle"] += 1
+                    continue
+                bump("files_by_category", entry.get("category") or "?")
                 for event in parse_file(path, entry.get("category", "")):
                     ctx = {"host": host, "profile": entry.get("profile"),
                            "source": event.source, "ts": event.ts or entry.get("mtime"),
@@ -54,6 +69,7 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                         con, collection_id, category=entry.get("category"), role=event.role,
                         location=event.location, text=stored_text[:100_000], **ctx)
                     stats["events"] += 1
+                    bump("events_by_category", entry.get("category") or "?")
                     for f in findings:
                         db.insert_finding(con, collection_id, event_id, f, **ctx)
                         stats["findings"] += 1
@@ -108,7 +124,7 @@ def process_bundle(settings: Settings, collection_id: int) -> dict:
                 if result:
                     db.set_triage(settings, finding["id"], *result)
                     stats["triaged"] += 1
-        db.set_status(settings, collection_id, "done")
+        db.set_status(settings, collection_id, "done", stats=stats)
         return stats
     except Exception as exc:
         db.set_status(settings, collection_id, "error", f"{type(exc).__name__}: {exc}"[:500])
