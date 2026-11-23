@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+{% if running %}
+<h2>Execuções em andamento</h2>
+{% set rows = running %}
+{% include "_runs_table.html" %}
+{% endif %}
 <h2>Coletas recebidas</h2>
 <table>
   <tr><th>#</th><th>Host</th><th>Recebido</th><th>Status</th><th>Eventos</th><th>Achados</th><th>SHA-256 do pacote</th></tr>

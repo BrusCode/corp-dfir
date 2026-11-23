@@ -28,7 +28,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$CollectorVersion = "cert-1.0.0"
+$CollectorVersion = "cert-1.1.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Mesma exceção do Bitdefender do coletor principal.
 $PauseMs = 50
 $CertExtensions = @(".pfx", ".p12", ".cer", ".crt", ".pem", ".key")
@@ -41,11 +41,49 @@ if (-not (Test-Path -LiteralPath $StagingRoot)) { New-Item -ItemType Directory -
 $LogFile = Join-Path $StagingRoot "cert-collect.log"
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 
+# Percent reached when each step finishes (progress shown in the panel's "Execuções" page).
+$StepPercent = @{ inicio = 0; conexao = 2; instalados = 10; arquivos = 40; recentes = 45; historico = 48
+    acesso_remoto = 60; lixeira = 65; eventos = 75; execucao = 78; chaves = 80; pacote = 88; envio = 95; fim = 100 }
+$script:LastPercent = 0
+$script:LastProgressAt = [DateTime]::MinValue
+
+function Send-Progress([string]$Step, [string]$Status, [int]$Percent, [string]$Detail) {
+    # Fire-and-forget: never slows down or breaks the collection if the panel is unreachable.
+    try {
+        $payload = New-Object PSObject -Property ([ordered]@{
+            run_id = $RunId; host = $env:COMPUTERNAME; collector = "certificados"; version = $CollectorVersion
+            step = $Step; status = $Status; percent = $Percent
+            detail = $(if ($Detail.Length -gt 900) { $Detail.Substring(0, 900) } else { $Detail }) })
+        $bytes = $Utf8.GetBytes((ConvertTo-Json $payload -Compress))
+        $req = [Net.HttpWebRequest]::Create("https://${Server}:$Port/api/v1/progress")
+        $req.Method = "POST"
+        $req.ContentType = "application/json"
+        $req.Headers.Add("X-DFIR-Token", $Token)
+        $req.Timeout = 5000
+        $req.ReadWriteTimeout = 5000
+        $req.ContentLength = $bytes.Length
+        $s = $req.GetRequestStream(); $s.Write($bytes, 0, $bytes.Length); $s.Dispose()
+        $req.GetResponse().Dispose()
+    } catch { }
+    $script:LastProgressAt = Get-Date
+}
+
 function Write-Step([string]$Step, [string]$Status, [string]$Detail = "") {
     # Uma linha por passo: permite saber até onde a execução chegou, mesmo sem envio.
     $line = "{0} run={1} passo={2} status={3} {4}" -f (Get-Date).ToUniversalTime().ToString("o"), $RunId, $Step, $Status, $Detail
     try { [IO.File]::AppendAllText($LogFile, $line + "`r`n", $Utf8) } catch { }
+    if ($StepPercent.ContainsKey($Step)) { $script:LastPercent = $StepPercent[$Step] }
+    Send-Progress $Step $Status $script:LastPercent $Detail
     Write-Output $line
+}
+
+function Write-SubProgress([string]$Step, [string]$Detail, [int]$Done, [int]$Total) {
+    # Inside long steps: at most one update every 15 s, interpolating toward the step's percent.
+    if (((Get-Date) - $script:LastProgressAt).TotalSeconds -lt 15) { return }
+    $target = $(if ($StepPercent.ContainsKey($Step)) { $StepPercent[$Step] } else { $script:LastPercent })
+    $pct = $script:LastPercent
+    if ($Total -gt 0) { $pct = [int]($script:LastPercent + ($target - $script:LastPercent) * [Math]::Min(1, $Done / $Total)) }
+    Send-Progress $Step "info" $pct $Detail
 }
 
 trap {
@@ -252,7 +290,10 @@ function Add-CertFile($File, [string]$ProfileName) {
 try {
     $seen = @{}
     $found = New-Object System.Collections.Generic.List[object]
+    $pi = 0
     foreach ($p in $profiles) {
+        $pi++
+        Write-SubProgress "arquivos" ("procurando em perfil {0} ({1}/{2})" -f $p.Name, $pi, $profiles.Count) $pi ($profiles.Count * 2)
         foreach ($f in @("*.pfx", "*.p12")) {
             foreach ($x in (Get-FilesSafe $p.FullName $f 8)) { $found.Add(@($x, $p.Name)) }
         }
@@ -277,7 +318,10 @@ try {
             foreach ($x in (Get-ChildItem -LiteralPath $root -Filter $f -File -Force -ErrorAction SilentlyContinue)) { $found.Add(@($x, "_disco")) }
         }
     }
+    $fi = 0
     foreach ($item in $found) {
+        $fi++
+        Write-SubProgress "arquivos" ("analisando arquivos {0}/{1}" -f $fi, $found.Count) ($found.Count + $fi) ($found.Count * 2)
         $key = $item[0].FullName.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
@@ -339,7 +383,10 @@ try {
             @("C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\log", "*", "rustdesk"))) {
         foreach ($f in (Get-FilesSafe $spec[0] $spec[1] 3)) { $remoteLogs.Add(@($f, $spec[2], "_system")) }
     }
+    $li = 0
     foreach ($item in $remoteLogs) {
+        $li++
+        Write-SubProgress "acesso_remoto" ("lendo log {0} ({1}/{2})" -f $item[0].Name, $li, $remoteLogs.Count) $li $remoteLogs.Count
         if ($item[0].Length -gt 500MB) { continue }
         foreach ($m in (Select-String -LiteralPath $item[0].FullName -Pattern $CertExtPattern -ErrorAction SilentlyContinue)) {
             Add-Activity "acesso_remoto_arquivo" $item[0].LastWriteTime $item[2] $item[1] $item[0].FullName $m.Line.Trim()
@@ -493,6 +540,7 @@ function Send-Bundle([string]$Path) {
 
 $sent = 0; $failed = 0
 foreach ($zip in (Get-ChildItem -LiteralPath $StagingRoot -Filter "CorpDFIR-*.zip" -File -ErrorAction SilentlyContinue)) {
+    Send-Progress "envio" "info" 90 ("enviando {0} ({1:N1} MB)" -f $zip.Name, ($zip.Length / 1MB))
     try {
         $code = Send-Bundle $zip.FullName
         if ($code -eq 200 -or $code -eq 201) {

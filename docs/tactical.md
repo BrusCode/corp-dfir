@@ -66,3 +66,18 @@ Cadastre como um segundo script (`CorpDFIR - Certificados`), com os mesmos argum
    - `C:\ProgramData\CorpDFIR\collect.log`: transcrição completa do coletor principal.
 3. **Pacotes pendentes:** arquivos `CorpDFIR-*.zip` em `C:\ProgramData\CorpDFIR\` foram coletados, mas não enviados. São reenviados na próxima execução.
 4. **No servidor:** `cd ~/corp-dfir/deploy && docker compose logs --tail 100 api caddy`.
+
+## Acompanhar a execução no painel ("Execuções")
+
+Desde a versão 1.1 (principal) e cert-1.1.0 (certificados), os dois scripts informam o progresso ao painel enquanto rodam:
+
+- **Painel → Execuções** (e um bloco "Execuções em andamento" na página inicial). Mostra máquina, script, passo atual, barra de porcentagem, último sinal e início. A página se atualiza a cada 15 s. Clicando na máquina, aparece o histórico de passos da execução.
+- O progresso é enviado a cada passo concluído e, nos passos longos (busca e cópia de arquivos, leitura de logs), no máximo a cada 15 s, com detalhes como "copiando 120/800".
+- Situações:
+  - **em andamento**;
+  - **concluído**;
+  - **concluído com erro**: coletou, mas algum envio ficou pendente;
+  - **falhou**: o script parou; o detalhe traz a linha do erro;
+  - **sem sinal há +10 min**: o script travou, a máquina desligou ou perdeu a rede.
+- O envio do progresso tem tempo-limite de 5 s e não interrompe a coleta se o painel estiver fora do ar.
+- Execuções iniciadas com versões anteriores dos scripts não aparecem nessa página.

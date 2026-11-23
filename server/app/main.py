@@ -12,7 +12,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 from fastapi.templating import Jinja2Templates
 
 from app import config, db, llm
@@ -139,6 +140,44 @@ def ping(x_dfir_token: str = Header(default="")):
     return {"ok": True}
 
 
+class ProgressIn(BaseModel):
+    run_id: str = Field(min_length=1, max_length=64)
+    host: str = Field(default="", max_length=128)
+    collector: str = Field(default="", max_length=32)
+    version: str = Field(default="", max_length=32)
+    step: str = Field(min_length=1, max_length=64)
+    status: str = Field(default="ok", max_length=16)
+    percent: int = 0
+    detail: str = ""
+
+
+@app.post("/api/v1/progress", status_code=204)
+def progress(body: ProgressIn, x_dfir_token: str = Header(default="")):
+    """Step-by-step progress from a running collector (fire-and-forget on the client side)."""
+    settings = get_settings()
+    if not settings.upload_token or not hmac.compare_digest(x_dfir_token, settings.upload_token):
+        raise HTTPException(401, "token inválido")
+    db.record_progress(settings, run_id=body.run_id, host=body.host, collector=body.collector,
+                       version=body.version, step=body.step, status=body.status,
+                       percent=max(0, min(100, body.percent)), detail=body.detail[:1000])
+    return Response(status_code=204)
+
+
+@app.get("/runs", response_class=HTMLResponse)
+def runs(request: Request):
+    return templates.TemplateResponse(request, "runs.html", {"rows": db.list_runs(get_settings())})
+
+
+@app.get("/runs/{run_id}", response_class=HTMLResponse)
+def run_detail(request: Request, run_id: str):
+    settings = get_settings()
+    run = db.get_run(settings, run_id)
+    if run is None:
+        raise HTTPException(404, "execução não encontrada")
+    return templates.TemplateResponse(request, "run_detail.html",
+                                      {"run": run, "history": db.run_history(settings, run_id)})
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -148,6 +187,7 @@ def healthz():
 def index(request: Request):
     settings = get_settings()
     return templates.TemplateResponse(request, "index.html", {
+        "running": [r for r in db.list_runs(settings, 50) if r["state"] in ("em_andamento", "sem_sinal")],
         "collections": db.list_collections(settings),
         "secrets": db.correlated_secrets(settings)[:10],
     })

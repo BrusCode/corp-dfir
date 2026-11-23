@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.config import Settings
 
@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS certificates (
   file_sha256 TEXT, file_created TEXT, zone_id INTEGER, host_url TEXT, referrer_url TEXT,
   verdict TEXT
 );
+CREATE TABLE IF NOT EXISTS runs (
+  run_id TEXT PRIMARY KEY, host TEXT, collector TEXT, version TEXT, started_at TEXT,
+  updated_at TEXT, step TEXT, status TEXT, percent INTEGER, detail TEXT, finished INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS run_events (
+  id INTEGER PRIMARY KEY, run_id TEXT NOT NULL, at TEXT, step TEXT, status TEXT,
+  percent INTEGER, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_coll ON events(collection_id);
@@ -249,3 +258,61 @@ def list_cert_activity(settings, host=None, limit=5000) -> list[dict]:
     params.append(limit)
     with connect(settings) as con:
         return [dict(r) for r in con.execute(query, params)]
+
+
+STALE_MINUTES = 10
+MAX_RUN_EVENTS = 500
+
+
+def record_progress(settings, *, run_id, host, collector, version, step, status, percent, detail) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    finished = 1 if step in ("fim", "falha") else 0
+    with connect(settings) as con:
+        con.execute(
+            "INSERT INTO runs (run_id, host, collector, version, started_at, updated_at, step, status,"
+            " percent, detail, finished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(run_id) DO UPDATE SET updated_at=excluded.updated_at, step=excluded.step,"
+            " status=excluded.status, percent=MAX(runs.percent, excluded.percent),"
+            " detail=excluded.detail, finished=MAX(runs.finished, excluded.finished),"
+            " host=excluded.host, version=excluded.version",
+            (run_id, host, collector, version, now, now, step, status, percent, detail, finished))
+        count = con.execute("SELECT COUNT(*) FROM run_events WHERE run_id=?", (run_id,)).fetchone()[0]
+        if count < MAX_RUN_EVENTS:
+            con.execute("INSERT INTO run_events (run_id, at, step, status, percent, detail)"
+                        " VALUES (?, ?, ?, ?, ?, ?)", (run_id, now, step, status, percent, detail))
+
+
+def _run_state(row: dict) -> str:
+    if row["finished"]:
+        if row["step"] == "falha":
+            return "falhou"
+        return "concluido_com_erro" if row["status"] == "erro" else "concluido"
+    updated = datetime.fromisoformat(row["updated_at"])
+    if datetime.now(timezone.utc) - updated > timedelta(minutes=STALE_MINUTES):
+        return "sem_sinal"
+    return "em_andamento"
+
+
+def list_runs(settings, limit=200) -> list[dict]:
+    with connect(settings) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,))]
+    for r in rows:
+        r["state"] = _run_state(r)
+    return rows
+
+
+def get_run(settings, run_id: str) -> dict | None:
+    with connect(settings) as con:
+        row = con.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not row:
+        return None
+    r = dict(row)
+    r["state"] = _run_state(r)
+    return r
+
+
+def run_history(settings, run_id: str) -> list[dict]:
+    with connect(settings) as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM run_events WHERE run_id=? ORDER BY id", (run_id,))]

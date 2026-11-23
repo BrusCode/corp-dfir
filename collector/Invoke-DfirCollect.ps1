@@ -33,12 +33,14 @@ param(
 $ErrorActionPreference = "Stop"
 trap {
     # Uncaught error: print the line number (also captured by the transcript) and stop.
-    Write-Output ("FALHA linha {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message)
+    $failMsg = "linha {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message
+    Write-Output ("FALHA " + $failMsg)
+    if (Get-Command Send-Progress -ErrorAction SilentlyContinue) { Send-Progress "falha" "erro" $script:LastPercent $failMsg }
     break
 }
 $ProgressPreference = "SilentlyContinue"
 
-$CollectorVersion = "1.0.0"
+$CollectorVersion = "1.1.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Única exceção do Bitdefender.
 $MaxFileBytes = 200MB
 $MaxBundleBytes = 2GB
@@ -58,12 +60,50 @@ $pinEarly = ($CertThumbprint -replace "[^0-9A-Fa-f]", "").ToUpperInvariant()
     if ($pinEarly) { return ($cert.GetCertHashString().ToUpperInvariant() -eq $pinEarly) }
     return $true
 }.GetNewClosure()
+# --- Progresso no painel ("Execuções") -----------------------------------------------------
+$RunId = [Guid]::NewGuid().ToString("N").Substring(0, 12)
+$ProgUtf8 = New-Object System.Text.UTF8Encoding($false)
+$script:LastPercent = 0
+$script:LastProgressAt = [DateTime]::MinValue
+
+function Send-Progress([string]$Step, [string]$Status, [int]$Percent, [string]$Detail = "") {
+    # Fire-and-forget: never slows down or breaks the collection if the panel is unreachable.
+    try {
+        $payload = New-Object PSObject -Property ([ordered]@{
+            run_id = $RunId; host = $env:COMPUTERNAME; collector = "principal"; version = $CollectorVersion
+            step = $Step; status = $Status; percent = $Percent
+            detail = $(if ($Detail.Length -gt 900) { $Detail.Substring(0, 900) } else { $Detail }) })
+        $bytes = $ProgUtf8.GetBytes((ConvertTo-Json $payload -Compress))
+        $req = [Net.HttpWebRequest]::Create("https://${Server}:$Port/api/v1/progress")
+        $req.Method = "POST"
+        $req.ContentType = "application/json"
+        $req.Headers.Add("X-DFIR-Token", $Token)
+        $req.Timeout = 5000
+        $req.ReadWriteTimeout = 5000
+        $req.ContentLength = $bytes.Length
+        $st = $req.GetRequestStream(); $st.Write($bytes, 0, $bytes.Length); $st.Dispose()
+        $req.GetResponse().Dispose()
+    } catch { }
+    if ($Percent -gt $script:LastPercent) { $script:LastPercent = $Percent }
+    $script:LastProgressAt = Get-Date
+    "PROGRESSO run={0} passo={1} status={2} {3}% {4}" -f $RunId, $Step, $Status, $Percent, $Detail
+}
+
+function Send-SubProgress([string]$Step, [string]$Detail, [int]$From, [int]$To, [int]$Done, [int]$Total) {
+    if (((Get-Date) - $script:LastProgressAt).TotalSeconds -lt 15) { return }
+    $pct = $From
+    if ($Total -gt 0) { $pct = [int]($From + ($To - $From) * [Math]::Min(1, $Done / $Total)) }
+    Send-Progress $Step "info" $pct $Detail | Out-Null
+}
+
+Send-Progress "inicio" "ok" 0 ("servidor=https://{0}:{1}" -f $Server, $Port)
 try {
     $pingReq = [Net.HttpWebRequest]::Create("https://${Server}:$Port/api/v1/ping")
     $pingReq.Headers.Add("X-DFIR-Token", $Token)
     $pingReq.Timeout = 15000
     $pingResp = $pingReq.GetResponse(); $pingResp.Dispose()
     "CONEXAO ok (servidor alcançado e token válido)"
+    Send-Progress "conexao" "ok" 2 "servidor alcançado e token válido"
 } catch {
     $r = $_.Exception.Response
     if ($r) { "CONEXAO erro HTTP {0} (401 = token errado)" -f [int]$r.StatusCode }
@@ -337,19 +377,25 @@ foreach ($s in $SystemSources) {
 
 # Remove duplicates (overlapping filters).
 $unique = $candidates | Sort-Object { $_.File.FullName } -Unique
+$totalFiles = @($unique).Count
+Send-Progress "varredura" "ok" 15 ("arquivos encontrados={0}" -f $totalFiles)
 
 if ($DryRun) {
     $unique | ForEach-Object {
         "{0}`t{1}`t{2}`t{3}" -f $_.Cat, $_.Profile, $_.File.Length, $_.File.FullName
     }
     "DRYRUN: {0} arquivos, {1:N1} MB" -f @($unique).Count, (($unique | Measure-Object { $_.File.Length } -Sum).Sum / 1MB)
+    Send-Progress "fim" "ok" 100 "DryRun: nada copiado nem enviado" | Out-Null
     exit 0
 }
 
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 $manifest = New-Object System.Collections.Generic.List[object]
 $total = 0L
+$fileIndex = 0
 foreach ($c in $unique) {
+    $fileIndex++
+    Send-SubProgress "copia" ("copiando {0}/{1}" -f $fileIndex, $totalFiles) 15 75 $fileIndex $totalFiles
     $f = $c.File
     $entry = [ordered]@{
         profile       = $c.Profile
@@ -388,6 +434,7 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 [string]$manifestJson = ConvertTo-SafeJsonArray $manifest "manifesto"
 [IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), $manifestJson, $utf8)
 
+Send-Progress "copia" "ok" 75 ("copiados={0}" -f @($manifest | Where-Object { $_.status -eq "copied" }).Count)
 $certRecords = New-Object System.Collections.Generic.List[object]
 try { foreach ($r in (Get-CertInventory $profiles)) { $certRecords.Add($r) } } catch { }
 foreach ($c in $unique) {
@@ -409,6 +456,7 @@ $custody = [ordered]@{
 }
 [IO.File]::WriteAllText((Join-Path $runDir "custody.json"), [string](ConvertTo-Json (New-Object PSObject -Property $custody) -Depth 3), $utf8)
 
+Send-Progress "certificados" "ok" 80 ("certificados={0}" -f $certRecords.Count)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $bundlePath = Join-Path $StagingRoot $bundleName
 [IO.Compression.ZipFile]::CreateFromDirectory($runDir, $bundlePath, [IO.Compression.CompressionLevel]::Optimal, $false)
@@ -455,8 +503,10 @@ function Send-Bundle([string]$Path) {
 }
 
 # Envia o pacote atual e qualquer pendente de execuções anteriores.
+Send-Progress "pacote" "ok" 88 ("pacote={0}" -f $bundleName)
 $sent = 0; $failed = 0
 foreach ($zip in (Get-ChildItem -LiteralPath $StagingRoot -Filter "CorpDFIR-*.zip" -File -ErrorAction SilentlyContinue)) {
+    Send-Progress "envio" "info" 90 ("enviando {0} ({1:N1} MB)" -f $zip.Name, ($zip.Length / 1MB))
     try {
         $code = Send-Bundle $zip.FullName
         if ($code -eq 200 -or $code -eq 201) {
@@ -472,6 +522,7 @@ foreach ($zip in (Get-ChildItem -LiteralPath $StagingRoot -Filter "CorpDFIR-*.zi
 Get-ChildItem -LiteralPath $StagingRoot -Directory -Filter "run-*" -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
+Send-Progress "fim" $(if ($failed) { "erro" } else { "ok" }) 100 ("enviados={0} pendentes={1}" -f $sent, $failed)
 "OK host={0} arquivos={1} copiados={2} certificados={3} MB={4:N1} enviados={5} pendentes={6}" -f `
     $hostName, $custody.files_total, $custody.files_copied, $custody.certificates, ($total / 1MB), $sent, $failed
 if ($failed -gt 0) { exit 2 }

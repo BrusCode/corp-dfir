@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<meta http-equiv="refresh" content="15">
+<h2>Execuções dos scripts</h2>
+<p class="muted">Atualiza sozinha a cada 15 s. Cada script envia o passo atual e a porcentagem; sem sinal por mais de 10 minutos, a execução é marcada para verificação.</p>
+{% include "_runs_table.html" %}
+{% endblock %}
