@@ -40,7 +40,7 @@ trap {
 }
 $ProgressPreference = "SilentlyContinue"
 
-$CollectorVersion = "1.1.0"
+$CollectorVersion = "1.2.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Única exceção do Bitdefender.
 $MaxFileBytes = 200MB
 $MaxBundleBytes = 2GB
@@ -175,20 +175,15 @@ function ConvertTo-PlainValue($Value) {
     return [string]$Value
 }
 
-function ConvertTo-SafeJsonArray($Items, [string]$Label) {
-    # Windows PowerShell 5.1: ConvertTo-Json fails ("Argument types do not match") on a list of
-    # [ordered] dictionaries. Convert each record to a plain PSObject and serialize it alone.
-    $parts = New-Object System.Collections.Generic.List[string]
-    $skipped = 0
-    foreach ($item in @($Items)) {
-        try {
-            $plain = New-Object System.Collections.Specialized.OrderedDictionary
-            foreach ($k in @($item.Keys)) { $plain[[string]$k] = ConvertTo-PlainValue $item[$k] }
-            $parts.Add((ConvertTo-Json (New-Object PSObject -Property $plain) -Compress -Depth 3))
-        } catch { $skipped++ }
-    }
-    if ($skipped -gt 0) { Write-Host ("AVISO {0}: {1} registro(s) ignorado(s) por erro de conversão" -f $Label, $skipped) }
-    return "[" + ($parts -join ",") + "]"
+function Add-Record($List, $Dict) {
+    # Windows PowerShell 5.1 throws "Argument types do not match" when enumerating a list of
+    # [ordered] dictionaries. Each record is turned into compact JSON right away, so the lists
+    # only ever hold strings; a record that cannot be converted is counted and skipped.
+    try {
+        $plain = New-Object System.Collections.Specialized.OrderedDictionary
+        foreach ($k in $Dict.Keys) { $plain[[string]$k] = ConvertTo-PlainValue $Dict[$k] }
+        $List.Add([string](ConvertTo-Json (New-Object PSObject -Property $plain) -Compress -Depth 3))
+    } catch { $script:JsonSkipped++ }
 }
 
 function Get-FilesBounded {
@@ -285,13 +280,12 @@ function Get-StoreBlobCert([string]$BlobPath) {
     return @{ Cert = $cert; HasKey = $hasKey }
 }
 
-function Get-CertInventory($Profiles) {
-    $records = New-Object System.Collections.Generic.List[object]
+function Get-CertInventory($Profiles, $Target) {
     foreach ($storePath in @("Cert:\LocalMachine\My", "Cert:\LocalMachine\Root", "Cert:\LocalMachine\CA")) {
         foreach ($c in (Get-ChildItem $storePath -ErrorAction SilentlyContinue)) {
             $r = ConvertTo-CertRecord $c "store:$storePath" "_system" $null
             # Root/CA store: only non-ICP or recently added roots are interesting; keep all, filter on server.
-            $records.Add($r)
+            Add-Record $Target $r
         }
     }
     foreach ($p in $Profiles) {
@@ -303,13 +297,12 @@ function Get-CertInventory($Profiles) {
                     $r = ConvertTo-CertRecord $parsed.Cert "store:CurrentUser\My" $p.Name $blob.FullName
                     $r.has_private_key = $parsed.HasKey
                     $r.file_created = $blob.CreationTimeUtc.ToString("o")
-                    $records.Add($r)
+                    Add-Record $Target $r
                 }
             } catch { }
             Start-Sleep -Milliseconds $PauseMs
         }
     }
-    return $records
 }
 
 function Get-CertFileRecord($File, [string]$Profile) {
@@ -390,7 +383,9 @@ if ($DryRun) {
 }
 
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
-$manifest = New-Object System.Collections.Generic.List[object]
+$manifest = New-Object System.Collections.Generic.List[string]    # JSON por arquivo
+$JsonSkipped = 0
+$copiedCount = 0
 $total = 0L
 $fileIndex = 0
 foreach ($c in $unique) {
@@ -426,23 +421,25 @@ foreach ($c in $unique) {
     } catch {
         $entry.status = "error: " + $_.Exception.GetType().Name
     }
-    $manifest.Add($entry)
+    if ($entry.status -eq "copied") { $copiedCount++ }
+    Add-Record $manifest $entry
     Start-Sleep -Milliseconds $PauseMs
 }
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-[string]$manifestJson = ConvertTo-SafeJsonArray $manifest "manifesto"
+[string]$manifestJson = "[" + ($manifest -join ",") + "]"
 [IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), $manifestJson, $utf8)
 
-Send-Progress "copia" "ok" 75 ("copiados={0}" -f @($manifest | Where-Object { $_.status -eq "copied" }).Count)
-$certRecords = New-Object System.Collections.Generic.List[object]
-try { foreach ($r in (Get-CertInventory $profiles)) { $certRecords.Add($r) } } catch { }
+Send-Progress "copia" "ok" 75 ("copiados={0}" -f $copiedCount)
+$certRecords = New-Object System.Collections.Generic.List[string]  # JSON por certificado
+try { Get-CertInventory $profiles $certRecords } catch { }
 foreach ($c in $unique) {
     if (@(".pfx", ".p12", ".cer", ".crt", ".pem") -contains $c.File.Extension.ToLowerInvariant()) {
-        try { $certRecords.Add((Get-CertFileRecord $c.File $c.Profile)) } catch { }
+        try { Add-Record $certRecords (Get-CertFileRecord $c.File $c.Profile) } catch { }
     }
 }
-[string]$certsJson = ConvertTo-SafeJsonArray $certRecords "certificados"
+[string]$certsJson = "[" + ($certRecords -join ",") + "]"
+if ($JsonSkipped -gt 0) { "AVISO: {0} registro(s) ignorado(s) por erro de conversão" -f $JsonSkipped }
 [IO.File]::WriteAllText((Join-Path $runDir "certs.json"), $certsJson, $utf8)
 $custody = [ordered]@{
     hostname          = $hostName
@@ -450,7 +447,8 @@ $custody = [ordered]@{
     collected_at      = (Get-Date).ToUniversalTime().ToString("o")
     collector_version = $CollectorVersion
     files_total       = $manifest.Count
-    files_copied      = @($manifest | Where-Object { $_.status -eq "copied" }).Count
+    files_copied      = $copiedCount
+    json_skipped      = $JsonSkipped
     bytes_copied      = $total
     certificates      = $certRecords.Count
 }

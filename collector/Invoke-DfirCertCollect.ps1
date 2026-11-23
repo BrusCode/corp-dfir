@@ -28,7 +28,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$CollectorVersion = "cert-1.1.0"
+$CollectorVersion = "cert-1.2.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Mesma exceção do Bitdefender do coletor principal.
 $PauseMs = 50
 $CertExtensions = @(".pfx", ".p12", ".cer", ".crt", ".pem", ".key")
@@ -132,21 +132,15 @@ function ConvertTo-PlainValue($Value) {
     return [string]$Value
 }
 
-function ConvertTo-SafeJsonArray($Items, [string]$Label) {
-    # PowerShell 5.1 can fail on exotic value types inside dictionaries; convert each record to
-    # plain values and serialize it alone, so one bad record never breaks the whole package.
-    $parts = New-Object System.Collections.Generic.List[string]
-    $skipped = 0
-    foreach ($item in @($Items)) {
-        try {
-            $plain = New-Object System.Collections.Specialized.OrderedDictionary
-            foreach ($k in @($item.Keys)) { $plain[[string]$k] = ConvertTo-PlainValue $item[$k] }
-            $parts.Add((ConvertTo-Json (New-Object PSObject -Property $plain) -Compress -Depth 3))
-        } catch { $skipped++ }
-    }
-    # Report through the step log; the function's only output is the JSON text.
-    if ($skipped -gt 0) { Write-Step "json" "erro" ("{0}: {1} registro(s) ignorado(s) por erro de conversão" -f $Label, $skipped) | Out-Host }
-    return "[" + ($parts -join ",") + "]"
+function Add-Record($List, $Dict) {
+    # Windows PowerShell 5.1 throws "Argument types do not match" when enumerating a list of
+    # [ordered] dictionaries. Each record is turned into compact JSON right away, so the lists
+    # only ever hold strings; a record that cannot be converted is counted and skipped.
+    try {
+        $plain = New-Object System.Collections.Specialized.OrderedDictionary
+        foreach ($k in $Dict.Keys) { $plain[[string]$k] = ConvertTo-PlainValue $Dict[$k] }
+        $List.Add([string](ConvertTo-Json (New-Object PSObject -Property $plain) -Compress -Depth 3))
+    } catch { $script:JsonSkipped++ }
 }
 
 # --- Helpers -------------------------------------------------------------------------------
@@ -219,19 +213,22 @@ function Add-Activity([string]$Type, $When, [string]$ProfileName, [string]$Sourc
         detail = $(if ($Detail.Length -gt 1500) { $Detail.Substring(0, 1500) } else { $Detail })
     }
     if ($Extra) { foreach ($k in $Extra.Keys) { $rec[$k] = $Extra[$k] } }
-    $script:Activity.Add($rec)
+    Add-Record $script:Activity $rec
+    $script:ActivityCounts[$Type] = 1 + [int]$script:ActivityCounts[$Type]
 }
 
 $profiles = @(Get-ChildItem -LiteralPath "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
     Where-Object { $SkipProfiles -notcontains $_.Name -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) })
-$Certs = New-Object System.Collections.Generic.List[object]
-$Activity = New-Object System.Collections.Generic.List[object]
+$Certs = New-Object System.Collections.Generic.List[string]       # JSON por certificado
+$Activity = New-Object System.Collections.Generic.List[string]    # JSON por atividade
+$ActivityCounts = @{}
+$JsonSkipped = 0
 
 # --- 1. Certificados instalados --------------------------------------------------------------
 try {
     foreach ($store in @("Cert:\LocalMachine\My", "Cert:\LocalMachine\Root", "Cert:\LocalMachine\CA", "Cert:\LocalMachine\TrustedPeople")) {
         foreach ($c in (Get-ChildItem $store -ErrorAction SilentlyContinue)) {
-            $Certs.Add((ConvertTo-CertRecord $c "store:$store" "_system" $null))
+            Add-Record $Certs (ConvertTo-CertRecord $c "store:$store" "_system" $null)
         }
     }
     foreach ($p in $profiles) {
@@ -244,7 +241,7 @@ try {
                     $r.has_private_key = $parsed.HasKey
                     $r.file_created = $blob.CreationTimeUtc.ToString("o")   # ~ data da importação
                     $r.file_modified = $blob.LastWriteTimeUtc.ToString("o")
-                    $Certs.Add($r)
+                    Add-Record $Certs $r
                     Add-Activity "certificado_instalado" $blob.CreationTime $p.Name "repositorio_usuario" $blob.FullName `
                         ("instalado no repositório do usuário: {0}" -f $parsed.Cert.Subject)
                 }
@@ -281,7 +278,7 @@ function Add-CertFile($File, [string]$ProfileName) {
     $r.file_modified = $File.LastWriteTimeUtc.ToString("o")
     $r.file_accessed = $File.LastAccessTimeUtc.ToString("o")
     $r.zone_id = $zone.zone_id; $r.host_url = $zone.host_url; $r.referrer_url = $zone.referrer_url
-    $script:Certs.Add($r)
+    Add-Record $script:Certs $r
     $origin = $(if ($zone.host_url) { " baixado de $($zone.host_url)" } else { "" })
     Add-Activity "arquivo_certificado" $File.CreationTime $ProfileName "arquivo" $File.FullName ("arquivo criado na máquina$origin")
     Start-Sleep -Milliseconds $PauseMs
@@ -485,8 +482,9 @@ $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $runDir = Join-Path $StagingRoot "cert-run-$stamp"
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), "[]", $Utf8)
-[string]$certsJson = ConvertTo-SafeJsonArray $Certs "certificados"
-[string]$activityJson = ConvertTo-SafeJsonArray $Activity "atividades"
+[string]$certsJson = "[" + ($Certs -join ",") + "]"
+[string]$activityJson = "[" + ($Activity -join ",") + "]"
+if ($JsonSkipped -gt 0) { Write-Step "json" "erro" ("{0} registro(s) ignorado(s) por erro de conversão" -f $JsonSkipped) }
 [IO.File]::WriteAllText((Join-Path $runDir "certs.json"), $certsJson, $Utf8)
 [IO.File]::WriteAllText((Join-Path $runDir "cert_activity.json"), $activityJson, $Utf8)
 $custody = [ordered]@{
@@ -497,6 +495,7 @@ $custody = [ordered]@{
     run_id = $RunId
     certificates = $Certs.Count
     activities = $Activity.Count
+    json_skipped = $JsonSkipped
 }
 [IO.File]::WriteAllText((Join-Path $runDir "custody.json"), [string](ConvertTo-Json (New-Object PSObject -Property $custody) -Depth 3), $Utf8)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -506,7 +505,7 @@ Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction SilentlyContinue
 Write-Step "pacote" "ok" ("certificados={0} atividades={1} arquivo={2}" -f $Certs.Count, $Activity.Count, $bundle)
 
 if ($DryRun) {
-    $Activity | Group-Object { $_.type } | ForEach-Object { Write-Output ("  {0}: {1}" -f $_.Name, $_.Count) }
+    foreach ($t in $ActivityCounts.Keys) { Write-Output ("  {0}: {1}" -f $t, $ActivityCounts[$t]) }
     Write-Step "fim" "ok" "DryRun: pacote mantido em $StagingRoot, nada enviado"
     exit 0
 }
