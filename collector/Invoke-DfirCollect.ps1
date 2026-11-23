@@ -31,6 +31,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+trap {
+    # Uncaught error: print the line number (also captured by the transcript) and stop.
+    Write-Output ("FALHA linha {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message)
+    break
+}
 $ProgressPreference = "SilentlyContinue"
 
 $CollectorVersion = "1.0.0"
@@ -123,6 +128,29 @@ $SystemSources = @(
 )
 
 # --- Helpers -------------------------------------------------------------------------------
+function ConvertTo-PlainValue($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) { return $Value }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime().ToString("o") }
+    return [string]$Value
+}
+
+function ConvertTo-SafeJsonArray($Items, [string]$Label) {
+    # Windows PowerShell 5.1: ConvertTo-Json fails ("Argument types do not match") on a list of
+    # [ordered] dictionaries. Convert each record to a plain PSObject and serialize it alone.
+    $parts = New-Object System.Collections.Generic.List[string]
+    $skipped = 0
+    foreach ($item in @($Items)) {
+        try {
+            $plain = New-Object System.Collections.Specialized.OrderedDictionary
+            foreach ($k in @($item.Keys)) { $plain[[string]$k] = ConvertTo-PlainValue $item[$k] }
+            $parts.Add((ConvertTo-Json (New-Object PSObject -Property $plain) -Compress -Depth 3))
+        } catch { $skipped++ }
+    }
+    if ($skipped -gt 0) { Write-Host ("AVISO {0}: {1} registro(s) ignorado(s) por erro de conversão" -f $Label, $skipped) }
+    return "[" + ($parts -join ",") + "]"
+}
+
 function Get-FilesBounded {
     param([string]$Root, [string]$Filter, [int]$Depth)
     if (-not (Test-Path -LiteralPath $Root)) { return @() }
@@ -357,7 +385,8 @@ foreach ($c in $unique) {
 }
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), (ConvertTo-Json @($manifest) -Depth 4), $utf8)
+[string]$manifestJson = ConvertTo-SafeJsonArray $manifest "manifesto"
+[IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), $manifestJson, $utf8)
 
 $certRecords = New-Object System.Collections.Generic.List[object]
 try { foreach ($r in (Get-CertInventory $profiles)) { $certRecords.Add($r) } } catch { }
@@ -366,7 +395,8 @@ foreach ($c in $unique) {
         try { $certRecords.Add((Get-CertFileRecord $c.File $c.Profile)) } catch { }
     }
 }
-[IO.File]::WriteAllText((Join-Path $runDir "certs.json"), (ConvertTo-Json @($certRecords) -Depth 4), $utf8)
+[string]$certsJson = ConvertTo-SafeJsonArray $certRecords "certificados"
+[IO.File]::WriteAllText((Join-Path $runDir "certs.json"), $certsJson, $utf8)
 $custody = [ordered]@{
     hostname          = $hostName
     operator          = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -377,7 +407,7 @@ $custody = [ordered]@{
     bytes_copied      = $total
     certificates      = $certRecords.Count
 }
-[IO.File]::WriteAllText((Join-Path $runDir "custody.json"), (ConvertTo-Json $custody -Depth 3), $utf8)
+[IO.File]::WriteAllText((Join-Path $runDir "custody.json"), [string](ConvertTo-Json (New-Object PSObject -Property $custody) -Depth 3), $utf8)
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $bundlePath = Join-Path $StagingRoot $bundleName

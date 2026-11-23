@@ -48,6 +48,12 @@ function Write-Step([string]$Step, [string]$Status, [string]$Detail = "") {
     Write-Output $line
 }
 
+trap {
+    # Any uncaught error: record step context and line number in the local log, then stop.
+    Write-Step "falha" "erro" ("linha {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message)
+    break
+}
+
 # --- Conexão -------------------------------------------------------------------------------
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Pin = ($CertThumbprint -replace "[^0-9A-Fa-f]", "").ToUpperInvariant()
@@ -80,6 +86,30 @@ Write-Step "inicio" "ok" "host=$env:COMPUTERNAME versao=$CollectorVersion servid
 $conn = Test-Portal
 Write-Step "conexao" $(if ($conn.Ok) { "ok" } else { "erro" }) $conn.Detail
 if ($TestConnection) { if ($conn.Ok) { exit 0 } else { exit 3 } }
+
+function ConvertTo-PlainValue($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) { return $Value }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime().ToString("o") }
+    return [string]$Value
+}
+
+function ConvertTo-SafeJsonArray($Items, [string]$Label) {
+    # PowerShell 5.1 can fail on exotic value types inside dictionaries; convert each record to
+    # plain values and serialize it alone, so one bad record never breaks the whole package.
+    $parts = New-Object System.Collections.Generic.List[string]
+    $skipped = 0
+    foreach ($item in @($Items)) {
+        try {
+            $plain = New-Object System.Collections.Specialized.OrderedDictionary
+            foreach ($k in @($item.Keys)) { $plain[[string]$k] = ConvertTo-PlainValue $item[$k] }
+            $parts.Add((ConvertTo-Json (New-Object PSObject -Property $plain) -Compress -Depth 3))
+        } catch { $skipped++ }
+    }
+    # Report through the step log; the function's only output is the JSON text.
+    if ($skipped -gt 0) { Write-Step "json" "erro" ("{0}: {1} registro(s) ignorado(s) por erro de conversão" -f $Label, $skipped) | Out-Host }
+    return "[" + ($parts -join ",") + "]"
+}
 
 # --- Helpers -------------------------------------------------------------------------------
 function Get-Sha256OfFile([string]$Path) {
@@ -408,8 +438,10 @@ $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $runDir = Join-Path $StagingRoot "cert-run-$stamp"
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $runDir "manifest.json"), "[]", $Utf8)
-[IO.File]::WriteAllText((Join-Path $runDir "certs.json"), (ConvertTo-Json @($Certs) -Depth 4), $Utf8)
-[IO.File]::WriteAllText((Join-Path $runDir "cert_activity.json"), (ConvertTo-Json @($Activity) -Depth 4), $Utf8)
+[string]$certsJson = ConvertTo-SafeJsonArray $Certs "certificados"
+[string]$activityJson = ConvertTo-SafeJsonArray $Activity "atividades"
+[IO.File]::WriteAllText((Join-Path $runDir "certs.json"), $certsJson, $Utf8)
+[IO.File]::WriteAllText((Join-Path $runDir "cert_activity.json"), $activityJson, $Utf8)
 $custody = [ordered]@{
     hostname = $env:COMPUTERNAME
     operator = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -419,7 +451,7 @@ $custody = [ordered]@{
     certificates = $Certs.Count
     activities = $Activity.Count
 }
-[IO.File]::WriteAllText((Join-Path $runDir "custody.json"), (ConvertTo-Json $custody -Depth 3), $Utf8)
+[IO.File]::WriteAllText((Join-Path $runDir "custody.json"), [string](ConvertTo-Json (New-Object PSObject -Property $custody) -Depth 3), $Utf8)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $bundle = Join-Path $StagingRoot "CorpDFIR-CERT-$($env:COMPUTERNAME)-$stamp.zip"
 [IO.Compression.ZipFile]::CreateFromDirectory($runDir, $bundle, [IO.Compression.CompressionLevel]::Optimal, $false)
