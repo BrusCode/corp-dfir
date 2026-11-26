@@ -12,7 +12,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from fastapi.templating import Jinja2Templates
@@ -370,34 +370,71 @@ def admin_retriage(request: Request):
 SEVERITY_ORDER = {"alta": 0, "media": 1, "baixa": 2}
 
 
-def _report_context(host: str, download: bool) -> dict:
+REPORT_SECTIONS = {
+    "analise": "Análise dos resultados (IA)",
+    "resumo": "Resumo por tipo de achado",
+    "certificados": "Certificados sinalizados",
+    "linha_do_tempo": "Linha do tempo de certificados",
+    "achados": "Achados",
+    "acesso_remoto": "Acessos remotos",
+    "segredos": "Segredos correlacionados",
+    "arquivos": "Arquivos enviados (só CSV)",
+    "custodia": "Cadeia de custódia",
+}
+
+
+def _scope_data(host: str, collection_id: int | None) -> dict:
+    """Same data for HTML report and CSV export, scoped to a machine and/or one collection."""
     settings = get_settings()
     scope = host or None
-    findings = reportdata.dedupe_findings(db.list_findings(settings, host=scope, limit=50_000))
-    certs = reportdata.dedupe_certs(db.list_certificates(settings, scope))
-    timeline, omitted = reportdata.focus_timeline(db.list_cert_activity(settings, scope, limit=20_000))
-    collections = [c for c in db.list_collections(settings) if not host or c["host"] == host]
+    findings = reportdata.dedupe_findings(
+        db.list_findings(settings, host=scope, collection_id=collection_id, limit=50_000))
+    certs = reportdata.dedupe_certs(db.list_certificates(settings, scope, collection_id=collection_id))
+    timeline, omitted = reportdata.focus_timeline(
+        db.list_cert_activity(settings, scope, limit=20_000, collection_id=collection_id))
+    collections = [c for c in db.list_collections(settings)
+                   if (not host or c["host"] == host) and (not collection_id or c["id"] == collection_id)]
     for c in collections:
         try:
             c["custody_data"] = json.loads(c.get("custody") or "{}")
         except ValueError:
             c["custody_data"] = {}
+    fingerprints = {f["fingerprint"] for f in findings if f.get("fingerprint")}
+    secrets = [s for s in db.correlated_secrets(settings)
+               if (not host or host in (s.get("host_list") or "").split(","))
+               and (not collection_id or s["fingerprint"] in fingerprints)]
+    files = []
+    for c in collections:
+        files.extend({**f, "host": c["host"]} for f in db.list_collection_files(settings, c["id"]))
+    return {"findings": findings, "certs": certs, "timeline": timeline, "omitted": omitted,
+            "collections": collections, "secrets": secrets, "files": files,
+            "remote": db.remote_events(settings, scope, collection_id)}
+
+
+def _report_context(host: str, download: bool, collection_id: int | None = None,
+                    sections: list[str] | None = None) -> dict:
+    settings = get_settings()
+    d = _scope_data(host, collection_id)
+    findings, certs, timeline = d["findings"], d["certs"], d["timeline"]
     latest = db.latest_analysis(settings, host)
     sev = {k: 0 for k in SEVERITY_ORDER}
-    for f in findings:
-        sev[f["severity"]] = sev.get(f["severity"], 0) + 1
     by_rule: dict[str, int] = {}
     for f in findings:
+        sev[f["severity"]] = sev.get(f["severity"], 0) + 1
         by_rule[f["rule_id"]] = by_rule.get(f["rule_id"], 0) + 1
     verdicts = " ".join(c["verdict"] or "" for c in certs)
+    selected = [s for s in (sections or []) if s in REPORT_SECTIONS] or list(REPORT_SECTIONS)
     return {
         "host": host,
+        "collection_id": collection_id or "",
+        "scope_collection": d["collections"][0] if collection_id and d["collections"] else None,
+        "sections": selected,
         "hosts": db.list_hosts(settings),
         "download": download,
         "generated_at": br_datetime(datetime.now(timezone.utc).isoformat(), seconds=False) + " (Brasília)",
         "kpis": {
-            "coletas": len(collections),
-            "maquinas": len({c["host"] for c in collections}),
+            "coletas": len(d["collections"]),
+            "maquinas": len({c["host"] for c in d["collections"]}),
             "achados_alta": sev.get("alta", 0),
             "achados_media": sev.get("media", 0),
             "cert_terceiros_chave": sum(1 for c in certs if "cert_terceiro" in (c["verdict"] or "") and c["has_private_key"]),
@@ -410,11 +447,10 @@ def _report_context(host: str, download: bool) -> dict:
         "findings": sorted(findings, key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["host"]))[:500],
         "activity": timeline[:1500],
         "activity_total": len(timeline),
-        "activity_omitted": sorted(omitted.items(), key=lambda kv: -kv[1]),
-        "remote": db.remote_events(settings, scope)[:500],
-        "secrets": [s for s in db.correlated_secrets(settings)
-                    if not host or host in (s.get("host_list") or "").split(",")],
-        "collections": collections,
+        "activity_omitted": sorted(d["omitted"].items(), key=lambda kv: -kv[1]),
+        "remote": d["remote"][:500],
+        "secrets": d["secrets"],
+        "collections": d["collections"],
         "analysis": latest,
         "analysis_html": analysis.render_markdown(latest["text"]) if latest else "",
         "analyses": db.list_analyses(settings, host, 5),
@@ -423,17 +459,100 @@ def _report_context(host: str, download: bool) -> dict:
 
 
 @app.get("/report", response_class=HTMLResponse)
-def report(request: Request, host: str = ""):
-    return templates.TemplateResponse(request, "report.html", _report_context(host, download=False))
+def report(request: Request, host: str = "", collection_id: int | None = None,
+           sections: list[str] = Query(default=[])):
+    return templates.TemplateResponse(request, "report.html",
+                                      _report_context(host, False, collection_id, sections))
 
 
 @app.get("/report/download")
-def report_download(request: Request, host: str = ""):
-    resp = templates.TemplateResponse(request, "report.html", _report_context(host, download=True))
+def report_download(request: Request, host: str = "", collection_id: int | None = None,
+                    sections: list[str] = Query(default=[])):
+    resp = templates.TemplateResponse(request, "report.html",
+                                      _report_context(host, True, collection_id, sections))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    name = f"relatorio-corp-dfir-{SAFE_NAME.sub('_', host) or 'geral'}-{stamp}.html"
-    resp.headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    label = SAFE_NAME.sub("_", host) or "geral"
+    if collection_id:
+        label += f"-coleta{collection_id}"
+    resp.headers["Content-Disposition"] = f'attachment; filename="relatorio-corp-dfir-{label}-{stamp}.html"'
     return resp
+
+
+# --- Exportação seletiva --------------------------------------------------------------------
+def _csv(rows: list[dict], columns: list[tuple[str, str]]) -> bytes:
+    """CSV for Excel PT-BR: ';' separator, UTF-8 with BOM, times in Brasília."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow([label for label, _ in columns])
+    for r in rows:
+        out = []
+        for _, getter in columns:
+            value = getter(r) if callable(getter) else r.get(getter)
+            out.append("" if value is None else value)
+        writer.writerow(out)
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
+
+
+def _export_tables(d: dict) -> dict[str, tuple[list[dict], list]]:
+    br = br_datetime
+    return {
+        "certificados": (d["certs"], [
+            ("maquina", "host"), ("perfil", "profile"), ("veredito", "verdict"), ("titular", "subject"),
+            ("cnpj", "cnpj"), ("emissor", "issuer"), ("chave_privada", lambda r: "sim" if r["has_private_key"] else "não"),
+            ("criado_instalado", lambda r: br(r.get("file_created"))), ("validade", lambda r: br(r.get("not_after"))),
+            ("origem_download", "host_url"), ("referencia_download", "referrer_url"), ("local", lambda r: r.get("path") or r.get("origin")),
+            ("thumbprint", "thumbprint"), ("sha256_arquivo", "file_sha256"), ("coleta", "collection_id")]),
+        "linha_do_tempo": (d["timeline"], [
+            ("quando", lambda r: br(r.get("ts"))), ("maquina", "host"), ("perfil", "profile"), ("tipo", "role"),
+            ("achado", "rule_ids"), ("detalhe", "text"), ("origem", "original_path"), ("coleta", "collection_id")]),
+        "achados": (d["findings"], [
+            ("severidade", "severity"), ("regra", "rule_id"), ("categoria", "category"), ("maquina", "host"),
+            ("perfil", "profile"), ("fonte", "source"), ("quando", lambda r: br(r.get("ts"))), ("trecho", "snippet"),
+            ("valor_mascarado", "masked"), ("impressao", "fingerprint"), ("arquivo", "original_path"),
+            ("triagem_ia", "triage_label"), ("justificativa_ia", "triage_reason"), ("coleta", "collection_id")]),
+        "acesso_remoto": (d["remote"], [
+            ("maquina", "host"), ("ferramenta", lambda r: r["source"] + (" (nosso)" if r["source"] == "webposto-agente" else "")),
+            ("registro", "text"), ("arquivo", "original_path"), ("coleta", "collection_id")]),
+        "segredos": (d["secrets"], [
+            ("regra", "rule_id"), ("valor_mascarado", "masked"), ("impressao", "fingerprint"),
+            ("maquinas", "host_list"), ("ocorrencias", "occurrences")]),
+        "arquivos": (d["files"], [
+            ("maquina", "host"), ("tipo", "category"), ("perfil", "profile"), ("caminho_original", "original_path"),
+            ("tamanho_bytes", "size"), ("modificado", lambda r: br(r.get("mtime"))), ("status", "status"),
+            ("eventos", "events"), ("achados", "findings"), ("observacao", "reason"), ("sha256", "sha256"),
+            ("coleta", "collection_id")]),
+        "custodia": (d["collections"], [
+            ("coleta", "id"), ("maquina", "host"), ("pacote", "filename"), ("recebido", lambda r: br(r.get("received_at"))),
+            ("coletor", lambda r: r["custody_data"].get("collector_version", "")),
+            ("conta_execucao", lambda r: r["custody_data"].get("operator", "")), ("sha256_pacote", "sha256")]),
+    }
+
+
+@app.get("/export", response_class=HTMLResponse)
+def export_page(request: Request):
+    settings = get_settings()
+    return templates.TemplateResponse(request, "export.html", {
+        "collections": db.list_collections(settings), "hosts": db.list_hosts(settings),
+        "sections": REPORT_SECTIONS,
+    })
+
+
+@app.get("/export/data.zip")
+def export_zip(host: str = "", collection_id: int | None = None, sections: list[str] = Query(default=[])):
+    d = _scope_data(host, collection_id)
+    tables = _export_tables(d)
+    chosen = [s for s in sections if s in tables] or list(tables)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in chosen:
+            rows, columns = tables[name]
+            zf.writestr(f"{name}.csv", _csv(rows, columns))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    label = SAFE_NAME.sub("_", host) or "geral"
+    if collection_id:
+        label += f"-coleta{collection_id}"
+    return Response(buf.getvalue(), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="corp-dfir-{label}-{stamp}.zip"'})
 
 
 @app.post("/report/analyze")

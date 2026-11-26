@@ -182,12 +182,15 @@ def list_findings(settings, *, collection_id=None, host=None, severity=None,
         return [dict(r) for r in con.execute(query, params)]
 
 
-def remote_events(settings, host=None) -> list[dict]:
+def remote_events(settings, host=None, collection_id=None) -> list[dict]:
     query = "SELECT * FROM events WHERE category='acesso_remoto'"
     params = []
     if host:
         query += " AND host=?"
         params.append(host)
+    if collection_id:
+        query += " AND collection_id=?"
+        params.append(collection_id)
     with connect(settings) as con:
         return [dict(r) for r in con.execute(query + " ORDER BY host, id", params)]
 
@@ -236,13 +239,16 @@ def insert_certificate(con, collection_id: int, host: str, record: dict, verdict
     )
 
 
-def list_certificates(settings, host=None, only_flagged=True) -> list[dict]:
+def list_certificates(settings, host=None, only_flagged=True, collection_id=None) -> list[dict]:
     query, params = "SELECT * FROM certificates WHERE 1=1", []
     if only_flagged:
         query += " AND verdict != ''"
     if host:
         query += " AND host=?"
         params.append(host)
+    if collection_id:
+        query += " AND collection_id=?"
+        params.append(collection_id)
     with connect(settings) as con:
         return [dict(r) for r in con.execute(query + " ORDER BY host, cnpj", params)]
 
@@ -273,7 +279,7 @@ def findings_for_triage(settings, min_score: int) -> list[dict]:
             " ORDER BY id", (min_score,))]
 
 
-def list_cert_activity(settings, host=None, limit=5000) -> list[dict]:
+def list_cert_activity(settings, host=None, limit=5000, collection_id=None) -> list[dict]:
     query = ("SELECT e.*, (SELECT GROUP_CONCAT(f.rule_id) FROM findings f WHERE f.event_id=e.id)"
              " AS rule_ids, (SELECT MAX(f.score) FROM findings f WHERE f.event_id=e.id) AS score"
              " FROM events e WHERE e.category='certificado_atividade'")
@@ -281,6 +287,9 @@ def list_cert_activity(settings, host=None, limit=5000) -> list[dict]:
     if host:
         query += " AND e.host=?"
         params.append(host)
+    if collection_id:
+        query += " AND e.collection_id=?"
+        params.append(collection_id)
     query += " ORDER BY e.ts, e.id LIMIT ?"
     params.append(limit)
     with connect(settings) as con:

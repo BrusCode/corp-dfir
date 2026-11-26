@@ -15,6 +15,7 @@ VARIANTS = {
     "Invoke-DfirCollect.ps1": [
         ("Coleta completa", ""),
         ("Sem conversas de IA", "-SemIA"),
+        ("Complementar ao script de certificados (sem IA e sem certificados)", "-SemIA -SemCertificados"),
         ("Só testar conexão", "-TestConnection"),
     ],
     "Invoke-DfirCertCollect.ps1": [

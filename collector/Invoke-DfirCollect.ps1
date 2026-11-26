@@ -16,6 +16,9 @@
 .PARAMETER SemIA
   Skips AI agent conversations (Claude, Codex, Gemini/Antigravity, Cursor, VS Code, ...);
   keeps remote access logs, loose secrets and certificates.
+.PARAMETER SemCertificados
+  Skips certificates (inventory and .pfx/.p12/.key/.cer/.crt/.pem files): use when the
+  dedicated Invoke-DfirCertCollect.ps1 already covered them.
 .PARAMETER DryRun
   Lists what would be collected, without copying or sending.
 
@@ -31,6 +34,7 @@ param(
     [string]$CertThumbprint = "",
     [switch]$TestConnection,
     [switch]$SemIA,
+    [switch]$SemCertificados,
     [switch]$DryRun
 )
 
@@ -44,7 +48,7 @@ trap {
 }
 $ProgressPreference = "SilentlyContinue"
 
-$CollectorVersion = "1.5.0"
+$CollectorVersion = "1.6.0"
 $StagingRoot = "C:\ProgramData\CorpDFIR"      # Única exceção do Bitdefender.
 $MaxFileBytes = 200MB
 $MaxBundleBytes = 2GB
@@ -167,6 +171,7 @@ $SystemGlobSources = @(
 # Loose secrets in work folders (OpenRouter keys and others).
 $LooseFolders = @("Desktop", "Documents", "Downloads")
 $LooseFilters = @(".env*", "*.pfx", "*.p12", "*.key", "*.cer", "*.crt", "*.pem")
+if ($SemCertificados) { $LooseFilters = @(".env*") }
 $LooseDepth = 4
 
 $SystemSources = @(
@@ -464,10 +469,14 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 $catSummary = ($copiedByCat.Keys | Sort-Object | ForEach-Object { "{0}={1}" -f $_, $copiedByCat[$_] }) -join " "
 Send-Progress "copia" "ok" 75 ("copiados={0} por tipo: {1}" -f $copiedCount, $(if ($catSummary) { $catSummary } else { "nenhum" }))
 $certRecords = New-Object System.Collections.Generic.List[string]  # JSON por certificado
-try { Get-CertInventory $profiles $certRecords } catch { }
-foreach ($c in $unique) {
-    if (@(".pfx", ".p12", ".cer", ".crt", ".pem") -contains $c.File.Extension.ToLowerInvariant()) {
-        try { Add-Record $certRecords (Get-CertFileRecord $c.File $c.Profile) } catch { }
+if ($SemCertificados) {
+    "SEMCERTIFICADOS: inventário de certificados não coletado (use o script dedicado)"
+} else {
+    try { Get-CertInventory $profiles $certRecords } catch { }
+    foreach ($c in $unique) {
+        if (@(".pfx", ".p12", ".cer", ".crt", ".pem") -contains $c.File.Extension.ToLowerInvariant()) {
+            try { Add-Record $certRecords (Get-CertFileRecord $c.File $c.Profile) } catch { }
+        }
     }
 }
 [string]$certsJson = "[" + ($certRecords -join ",") + "]"

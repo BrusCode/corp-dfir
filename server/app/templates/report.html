@@ -57,7 +57,8 @@
     </select>
   </form>
   <button onclick="window.print()">Imprimir / salvar PDF</button>
-  <a href="/report/download?host={{ host }}"><button class="secondary" type="button">Baixar HTML</button></a>
+  <a href="/report/download?host={{ host }}&collection_id={{ collection_id }}{% for sct in sections %}&sections={{ sct }}{% endfor %}"><button class="secondary" type="button">Baixar HTML</button></a>
+  <a href="/export"><button class="secondary" type="button">Exportar seções / CSV</button></a>
   <form method="post" action="/report/analyze">
     <input type="hidden" name="host" value="{{ host }}">
     <button class="secondary" {% if not llm_on %}disabled title="Configure a IA em Configurações"{% endif %}>Solicitar análise por IA</button>
@@ -73,7 +74,7 @@
 <header class="report">
   <h1>Relatório de investigação — certificados digitais e acessos</h1>
   <div class="meta">
-    Escopo: <strong>{{ host or "todas as máquinas coletadas" }}</strong> · Gerado em {{ generated_at }} ·
+    Escopo: <strong>{{ host or "todas as máquinas coletadas" }}</strong>{% if scope_collection %} · coleta <strong>#{{ scope_collection.id }}</strong> ({{ scope_collection.filename }}){% endif %} · Gerado em {{ generated_at }} ·
     Fonte: coletas Corp-DFIR (metadados e hashes; chaves privadas não são copiadas)
   </div>
 </header>
@@ -89,6 +90,7 @@
   <div class="kpi"><div class="n">{{ remote | length }}</div><div class="l">registros de acesso remoto</div></div>
 </div>
 
+{% if 'analise' in sections %}
 <h2>Análise dos resultados</h2>
 {% if analysis %}
 <div class="analysis">{{ analysis_html | safe }}</div>
@@ -97,12 +99,16 @@
 <p class="note">Nenhuma análise registrada para este escopo. Use "Solicitar análise por IA" antes de exportar para incluí-la aqui.</p>
 {% endif %}
 
+{% endif %}
+{% if 'resumo' in sections %}
 <h2>Resumo por tipo de achado</h2>
 <table>
   <tr><th>Regra</th><th style="width:90px">Ocorrências</th></tr>
   {% for rule, n in by_rule %}<tr><td>{{ rule }}</td><td>{{ n }}</td></tr>{% else %}<tr><td colspan="2" class="muted">Nenhum achado.</td></tr>{% endfor %}
 </table>
 
+{% endif %}
+{% if 'certificados' in sections %}
 <h2>Certificados sinalizados</h2>
 <table>
   <tr><th>Máquina / perfil</th><th>Veredito</th><th>Titular / CNPJ</th><th>Emissor</th><th>Chave</th><th>Criado / instalado</th><th>Origem do download</th><th>Local</th></tr>
@@ -120,6 +126,8 @@
   {% else %}<tr><td colspan="8" class="muted">Nenhum certificado sinalizado.</td></tr>{% endfor %}
 </table>
 
+{% endif %}
+{% if 'linha_do_tempo' in sections %}
 <h2>Linha do tempo de atividade com certificados</h2>
 <table>
   <tr><th style="width:130px">Quando</th><th>Máquina</th><th>Tipo</th><th>Achado</th><th>Detalhe</th></tr>
@@ -134,6 +142,8 @@
 {% if activity_total > activity | length %}<p class="muted">Exibindo {{ activity | length }} de {{ activity_total }} eventos relevantes.</p>{% endif %}
 {% if activity_omitted %}<p class="muted">Eventos de rotina não listados (contagem): {% for k, v in activity_omitted %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}.</p>{% endif %}
 
+{% endif %}
+{% if 'achados' in sections %}
 <h2>Achados</h2>
 <table>
   <tr><th>Sev.</th><th>Regra</th><th>Máquina</th><th>Quando</th><th>Trecho (segredos mascarados)</th><th>Triagem IA</th></tr>
@@ -147,6 +157,8 @@
 </table>
 {% if findings | length >= 500 %}<p class="muted">Exibindo os 500 achados mais graves. Lista completa: exportação CSV no painel.</p>{% endif %}
 
+{% endif %}
+{% if 'acesso_remoto' in sections %}
 <h2>Acessos remotos</h2>
 <table>
   <tr><th>Máquina</th><th>Ferramenta</th><th>Registro</th></tr>
@@ -154,6 +166,8 @@
   {% else %}<tr><td colspan="3" class="muted">Nenhum registro de acesso remoto.</td></tr>{% endfor %}
 </table>
 
+{% endif %}
+{% if 'segredos' in sections %}
 <h2>Segredos correlacionados entre máquinas</h2>
 <table>
   <tr><th>Regra</th><th>Valor (mascarado)</th><th>Máquinas</th><th>Ocorrências</th></tr>
@@ -161,6 +175,8 @@
   {% else %}<tr><td colspan="4" class="muted">Nenhum segredo encontrado.</td></tr>{% endfor %}
 </table>
 
+{% endif %}
+{% if 'custodia' in sections %}
 <h2>Cadeia de custódia</h2>
 <table>
   <tr><th>Máquina</th><th>Pacote</th><th>Recebido</th><th>Coletor</th><th>Conta de execução</th><th>SHA-256 do pacote</th></tr>
@@ -173,6 +189,7 @@
   {% endfor %}
 </table>
 
+{% endif %}
 <footer>
   Metodologia: coletores executados nas máquinas da empresa como SYSTEM (Tactical RMM), com metadados de certificados
   (titular, CNPJ, emissor, validade, presença de chave privada, hash e origem de download via Zone.Identifier) e registros

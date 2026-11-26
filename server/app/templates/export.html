@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Exportar</h2>
+<p class="muted">Escolha o escopo e o que exportar. Para não repetir conteúdo, exporte cada coleta separadamente (por exemplo, a do script de certificados e a do principal).</p>
+<form method="get" id="exp" style="background:#fff;padding:16px;max-width:820px">
+  <h3>Escopo</h3>
+  <label>Coleta
+    <select name="collection_id">
+      <option value="">todas</option>
+      {% for c in collections %}
+      <option value="{{ c.id }}">#{{ c.id }} · {{ c.host }} · {{ c.filename }} · {{ c.received_at | br(False) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  &nbsp; <label>Máquina
+    <select name="host"><option value="">todas</option>{% for h in hosts %}<option>{{ h }}</option>{% endfor %}</select>
+  </label>
+  <h3>Seções</h3>
+  {% for key, label in sections.items() %}
+  <label style="display:block"><input type="checkbox" name="sections" value="{{ key }}" {% if key not in ("analise", "arquivos") %}checked{% endif %}> {{ label }}</label>
+  {% endfor %}
+  <h3>Formato</h3>
+  <button type="submit" formaction="/export/data.zip">Baixar CSV (zip, um arquivo por seção)</button>
+  <button type="submit" formaction="/report">Abrir relatório HTML</button>
+  <button type="submit" formaction="/report/download">Baixar relatório HTML</button>
+  <p class="muted">CSV separado por ponto e vírgula, com acentos (UTF-8) e horários de Brasília: abre direto no Excel. Segredos sempre mascarados.</p>
+</form>
+{% endblock %}
