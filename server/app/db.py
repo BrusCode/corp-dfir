@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS analyses (
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_findings_event ON findings(event_id);
+CREATE INDEX IF NOT EXISTS idx_findings_coll_path ON findings(collection_id, original_path);
+CREATE INDEX IF NOT EXISTS idx_findings_host ON findings(host, severity);
+CREATE INDEX IF NOT EXISTS idx_events_coll_path ON events(collection_id, original_path);
+CREATE INDEX IF NOT EXISTS idx_events_cat_host ON events(category, host);
+CREATE INDEX IF NOT EXISTS idx_files_coll ON files(collection_id);
+CREATE INDEX IF NOT EXISTS idx_certs_host ON certificates(host, collection_id);
 CREATE INDEX IF NOT EXISTS idx_events_coll ON events(collection_id);
 """
 

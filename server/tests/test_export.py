@@ -65,3 +65,14 @@ def test_export_page_lists_collections(settings, tmp_path, monkeypatch):
     client, a, b = setup(settings, tmp_path, monkeypatch)
     page = client.get("/export").text
     assert f'value="{a}"' in page and f'value="{b}"' in page and "Certificados" in page
+
+
+def test_empty_collection_field_means_all(settings, tmp_path, monkeypatch):
+    client, a, b = setup(settings, tmp_path, monkeypatch)
+    url = "/export/data.zip?collection_id=&host=&sections=certificados"
+    resp = client.get(url)
+    assert resp.status_code == 200
+    rows = zipfile.ZipFile(io.BytesIO(resp.content)).read("certificados.csv").decode("utf-8-sig")
+    assert "11111111000111" in rows and "22222222000122" in rows
+    assert client.get("/report?collection_id=&sections=certificados").status_code == 200
+    assert client.get("/report/download?collection_id=").status_code == 200

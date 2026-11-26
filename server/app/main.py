@@ -383,6 +383,12 @@ REPORT_SECTIONS = {
 }
 
 
+def _opt_int(value: str | None) -> int | None:
+    """Empty form fields ("todas") come as ""; treat them as no filter."""
+    value = (value or "").strip()
+    return int(value) if value.isdigit() else None
+
+
 def _scope_data(host: str, collection_id: int | None) -> dict:
     """Same data for HTML report and CSV export, scoped to a machine and/or one collection."""
     settings = get_settings()
@@ -459,15 +465,16 @@ def _report_context(host: str, download: bool, collection_id: int | None = None,
 
 
 @app.get("/report", response_class=HTMLResponse)
-def report(request: Request, host: str = "", collection_id: int | None = None,
+def report(request: Request, host: str = "", collection_id: str = "",
            sections: list[str] = Query(default=[])):
     return templates.TemplateResponse(request, "report.html",
-                                      _report_context(host, False, collection_id, sections))
+                                      _report_context(host, False, _opt_int(collection_id), sections))
 
 
 @app.get("/report/download")
-def report_download(request: Request, host: str = "", collection_id: int | None = None,
+def report_download(request: Request, host: str = "", collection_id: str = "",
                     sections: list[str] = Query(default=[])):
+    collection_id = _opt_int(collection_id)
     resp = templates.TemplateResponse(request, "report.html",
                                       _report_context(host, True, collection_id, sections))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
@@ -538,7 +545,8 @@ def export_page(request: Request):
 
 
 @app.get("/export/data.zip")
-def export_zip(host: str = "", collection_id: int | None = None, sections: list[str] = Query(default=[])):
+def export_zip(host: str = "", collection_id: str = "", sections: list[str] = Query(default=[])):
+    collection_id = _opt_int(collection_id)
     d = _scope_data(host, collection_id)
     tables = _export_tables(d)
     chosen = [s for s in sections if s in tables] or list(tables)
